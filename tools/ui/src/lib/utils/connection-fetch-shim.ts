@@ -338,6 +338,38 @@ export function installConnectionFetchShim(): void {
 				console.debug(`[Shim] Fetching models from: ${targetUrl}`);
 				try {
 					const response = await originalFetch(targetUrl, { ...init, headers: connectionHeaders });
+					
+					// Sanitize the response to avoid Open WebUI specific fields confusing the UI
+					if (response.ok) {
+						const contentType = response.headers.get('content-type') || '';
+						if (contentType.includes('application/json')) {
+							const data = await response.json();
+							
+							if (data && Array.isArray(data.data)) {
+								data.data = data.data.filter((m: any) => {
+									// Filter out models that Open WebUI explicitly marks as hidden
+									if (m?.info?.meta?.hidden === true) return false;
+									return true;
+								}).map((m: any) => {
+									// Map to standard OpenAI format to drop Open WebUI extras
+									return {
+										id: m.id,
+										name: m.name || m.id,
+										object: 'model',
+										created: m.created || Date.now(),
+										owned_by: m.owned_by || 'openai'
+									};
+								});
+								
+								return new Response(JSON.stringify(data), {
+									status: response.status,
+									statusText: response.statusText,
+									headers: response.headers
+								});
+							}
+						}
+					}
+					
 					console.debug(`[Shim] Models response status: ${response.status}`);
 					return response;
 				} catch (err) {
