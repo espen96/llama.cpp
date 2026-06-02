@@ -4,6 +4,7 @@
 	import { connectionsStore, type ServerConnection } from '$lib/stores/connections.svelte';
 	import { serverStore } from '$lib/stores/server.svelte';
 	import { modelsStore } from '$lib/stores/models.svelte';
+	import { toolsStore } from '$lib/stores/tools.svelte';
 	import { fade } from 'svelte/transition';
 	import { toast } from 'svelte-sonner';
 
@@ -90,10 +91,12 @@
 		// Immediate switch: clear and re-fetch everything
 		serverStore.clear();
 		modelsStore.clear();
+		toolsStore.clear();
 
 		try {
 			await serverStore.fetch();
 			await modelsStore.fetch(true);
+			await toolsStore.fetchBuiltinTools();
 		} catch (error) {
 			console.warn('[Connections] Re-fetch after switch failed:', error);
 		}

@@ -25,6 +25,7 @@
 	import { Toaster } from 'svelte-sonner';
 	import { modelsStore } from '$lib/stores/models.svelte';
 	import { mcpStore } from '$lib/stores/mcp.svelte';
+	import { toolsStore } from '$lib/stores/tools.svelte';
 	import { TOOLTIP_DELAY_DURATION } from '$lib/constants';
 	import { useKeyboardShortcuts } from '$lib/hooks/use-keyboard-shortcuts.svelte';
 	import { useSettingsNavigation } from '$lib/hooks/use-settings-navigation.svelte';
@@ -153,14 +154,17 @@
 		}
 	});
 
-	// Initialize server properties on app load (run once)
+	// Initialize server properties and tools on app load (run once)
 	$effect(() => {
-		// Only fetch if we don't already have props
-		if (!serverStore.props) {
-			untrack(() => {
+		untrack(() => {
+			// Only fetch if we don't already have props
+			if (!serverStore.props) {
 				serverStore.fetch();
-			});
-		}
+			}
+			if (toolsStore.builtinTools.length === 0) {
+				toolsStore.fetchBuiltinTools();
+			}
+		});
 	});
 
 	// Sync settings when server props are loaded

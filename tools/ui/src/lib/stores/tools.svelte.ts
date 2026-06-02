@@ -32,9 +32,6 @@ class ToolsStore {
 		} catch (err) {
 			console.error('[ToolsStore] Failed to load disabled tools from localStorage:', err);
 		}
-
-		// Initialize builtin tools on startup
-		this.fetchBuiltinTools();
 	}
 
 	private persistDisabledTools(): void {
@@ -393,6 +390,13 @@ class ToolsStore {
 	/** Check if there are any enabled tools available (builtin, MCP, or custom). */
 	get hasEnabledTools(): boolean {
 		return this.getEnabledToolsForLLM().length > 0;
+	}
+
+	clear(): void {
+		this._builtinTools = [];
+		this._loading = false;
+		this._error = null;
+		this._toolsEndpointUnreachable = false;
 	}
 
 	async fetchBuiltinTools(): Promise<void> {
