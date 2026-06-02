@@ -303,7 +303,8 @@ export function installConnectionFetchShim(): void {
 		const connection = connectionsStore.activeConnection;
 
 		// Extract URL string for debugging
-		let debugUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+		let debugUrl =
+			typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
 		console.debug(`[Shim] Fetch called: ${debugUrl}`, { hasConnection: !!connection });
 
 		if (!connection) {
@@ -327,10 +328,7 @@ export function installConnectionFetchShim(): void {
 
 		const baseUrl = connection.url.replace(/\/+$/, '');
 		const upstream = connection.upstreamPath?.replace(/\/+$/, '') || '';
-		const connectionHeaders = buildConnectionHeaders(
-			connection.apiKey,
-			init?.headers
-		);
+		const connectionHeaders = buildConnectionHeaders(connection.apiKey, init?.headers);
 
 		// Preserve query string from original path
 		const queryString = path.includes('?') ? path.slice(path.indexOf('?')) : '';
@@ -349,20 +347,22 @@ export function installConnectionFetchShim(): void {
 							const data = await response.json();
 
 							if (data && Array.isArray(data.data)) {
-								data.data = data.data.filter((m: any) => {
-									// Filter out models that Open WebUI explicitly marks as hidden
-									if (m?.info?.meta?.hidden === true) return false;
-									return true;
-								}).map((m: any) => {
-									// Map to standard OpenAI format to drop Open WebUI extras
-									return {
-										id: m.id,
-										name: m.name || m.id,
-										object: 'model',
-										created: m.created || Date.now(),
-										owned_by: m.owned_by || 'openai'
-									};
-								});
+								data.data = data.data
+									.filter((m: any) => {
+										// Filter out models that Open WebUI explicitly marks as hidden
+										if (m?.info?.meta?.hidden === true) return false;
+										return true;
+									})
+									.map((m: any) => {
+										// Map to standard OpenAI format to drop Open WebUI extras
+										return {
+											id: m.id,
+											name: m.name || m.id,
+											object: 'model',
+											created: m.created || Date.now(),
+											owned_by: m.owned_by || 'openai'
+										};
+									});
 
 								return new Response(JSON.stringify(data), {
 									status: response.status,
@@ -433,17 +433,17 @@ export function installConnectionFetchShim(): void {
 			case '/props': {
 				// Try upstream path first (llama-swap), then direct, then mock
 				if (upstream) {
-					const upstreamRes = await tryFetch(
-						`${baseUrl}${upstream}/props${queryString}`,
-						{ ...init, headers: connectionHeaders }
-					);
+					const upstreamRes = await tryFetch(`${baseUrl}${upstream}/props${queryString}`, {
+						...init,
+						headers: connectionHeaders
+					});
 					if (upstreamRes) return upstreamRes;
 				}
 
-				const directRes = await tryFetch(
-					`${baseUrl}/props${queryString}`,
-					{ ...init, headers: connectionHeaders }
-				);
+				const directRes = await tryFetch(`${baseUrl}/props${queryString}`, {
+					...init,
+					headers: connectionHeaders
+				});
 				if (directRes) return directRes;
 
 				return buildMockPropsResponse();
@@ -452,17 +452,17 @@ export function installConnectionFetchShim(): void {
 			case '/slots': {
 				// Try upstream, then direct, then mock
 				if (upstream) {
-					const upstreamRes = await tryFetch(
-						`${baseUrl}${upstream}/slots${queryString}`,
-						{ ...init, headers: connectionHeaders }
-					);
+					const upstreamRes = await tryFetch(`${baseUrl}${upstream}/slots${queryString}`, {
+						...init,
+						headers: connectionHeaders
+					});
 					if (upstreamRes) return upstreamRes;
 				}
 
-				const directRes = await tryFetch(
-					`${baseUrl}/slots${queryString}`,
-					{ ...init, headers: connectionHeaders }
-				);
+				const directRes = await tryFetch(`${baseUrl}/slots${queryString}`, {
+					...init,
+					headers: connectionHeaders
+				});
 				if (directRes) return directRes;
 
 				return buildMockResponse([]);
@@ -479,25 +479,25 @@ export function installConnectionFetchShim(): void {
 							}
 						} catch (e) {}
 					}
-					
+
 					if (isLocalTool) {
 						// Execute local tool on Vite server
 						return originalFetch(input, init);
 					}
-					
+
 					// Otherwise execute on upstream server
 					if (upstream) {
-						const upstreamRes = await tryFetch(
-							`${baseUrl}${upstream}/tools${queryString}`,
-							{ ...init, headers: connectionHeaders }
-						);
+						const upstreamRes = await tryFetch(`${baseUrl}${upstream}/tools${queryString}`, {
+							...init,
+							headers: connectionHeaders
+						});
 						if (upstreamRes) return upstreamRes;
 					}
 
-					const directRes = await tryFetch(
-						`${baseUrl}/tools${queryString}`,
-						{ ...init, headers: connectionHeaders }
-					);
+					const directRes = await tryFetch(`${baseUrl}/tools${queryString}`, {
+						...init,
+						headers: connectionHeaders
+					});
 					if (directRes) return directRes;
 
 					return buildMockResponse([]);
@@ -513,24 +513,24 @@ export function installConnectionFetchShim(): void {
 					} catch (e) {
 						console.error('[connection-shim] Error fetching local tools:', e);
 					}
-					
+
 					let remoteTools: any[] = [];
 					let remoteRes: Response | null = null;
-					
+
 					if (upstream) {
-						remoteRes = await tryFetch(
-							`${baseUrl}${upstream}/tools${queryString}`,
-							{ ...init, headers: connectionHeaders }
-						);
+						remoteRes = await tryFetch(`${baseUrl}${upstream}/tools${queryString}`, {
+							...init,
+							headers: connectionHeaders
+						});
 					}
-					
+
 					if (!remoteRes) {
-						remoteRes = await tryFetch(
-							`${baseUrl}/tools${queryString}`,
-							{ ...init, headers: connectionHeaders }
-						);
+						remoteRes = await tryFetch(`${baseUrl}/tools${queryString}`, {
+							...init,
+							headers: connectionHeaders
+						});
 					}
-					
+
 					if (remoteRes && remoteRes.ok) {
 						try {
 							// clone to avoid stream consumption issues if we needed it later, though here it's fine
@@ -540,7 +540,7 @@ export function installConnectionFetchShim(): void {
 							console.error('[connection-shim] Error parsing remote tools:', e);
 						}
 					}
-					
+
 					const merged = [...remoteTools, ...localTools];
 					return new Response(JSON.stringify(merged), {
 						status: 200,

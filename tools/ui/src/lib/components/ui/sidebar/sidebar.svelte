@@ -79,12 +79,12 @@
 				sidebar.isResizing && '!duration-0',
 				'w-0',
 				variant === 'floating'
-					? 'md:w-[calc(var(--sidebar-width)+0.75rem)]'
+					? 'md:w-[calc(var(--sidebar-width)_+_0.75rem)]'
 					: 'md:w-(--sidebar-width)',
 				'md:group-data-[collapsible=offcanvas]:w-0',
 				'group-data-[side=right]:rotate-180',
 				variant === 'floating' || variant === 'inset'
-					? 'group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]'
+					? 'group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_(--spacing(4))_+_2px)]'
 					: 'group-data-[collapsible=icon]:w-(--sidebar-width-icon)'
 			)}
 		></div>
@@ -111,9 +111,9 @@
 						],
 				// Adjust the padding for inset variant.
 				variant === 'inset'
-					? 'p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]'
+					? 'p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_(--spacing(4))_+_2px)]'
 					: variant === 'floating'
-						? 'group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]'
+						? 'group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_(--spacing(4))_+_2px)]'
 						: 'group-data-[collapsible=icon]:w-(--sidebar-width-icon)',
 				className
 			)}

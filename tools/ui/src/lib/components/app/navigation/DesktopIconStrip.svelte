@@ -41,10 +41,10 @@
 <div
 	class="hidden shrink-0 transition-[width] duration-200 ease-linear md:block {sidebarOpen
 		? 'w-0'
-		: 'w-[calc(var(--sidebar-width-icon)+1.5rem)]'}"
+		: 'w-[calc(var(--sidebar-width-icon)_+_1.5rem)]'}"
 ></div>
 <aside
-	class="fixed top-0 bottom-0 left-0 z-10 hidden w-[calc(var(--sidebar-width-icon)+1.5rem)] flex-col items-center justify-between py-3 transition-opacity duration-200 ease-linear md:flex {sidebarOpen
+	class="fixed top-0 bottom-0 left-0 z-10 hidden w-[calc(var(--sidebar-width-icon)_+_1.5rem)] flex-col items-center justify-between py-3 transition-opacity duration-200 ease-linear md:flex {sidebarOpen
 		? 'pointer-events-none opacity-0'
 		: 'opacity-100'}"
 >

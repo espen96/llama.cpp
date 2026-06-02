@@ -21,6 +21,7 @@
 	import { ErrorDialogType } from '$lib/enums';
 	import { createAutoScrollController } from '$lib/hooks/use-auto-scroll.svelte';
 	import { useKeyboardShortcuts } from '$lib/hooks/use-keyboard-shortcuts.svelte';
+	import { isMobile } from '$lib/stores/viewport.svelte';
 	import {
 		chatStore,
 		errorDialog,
@@ -75,6 +76,30 @@
 	let emptyFileNames = $state<string[]>([]);
 
 	let initialMessage = $state('');
+
+	let previewWidth = $state(50); // percentage for desktop
+	let isResizing = $state(false);
+
+	function startResizing(e: PointerEvent) {
+		if (isMobile.current || artifactsStore.isFullscreen) return;
+		isResizing = true;
+		e.preventDefault();
+		const handlePointerMove = (ev: PointerEvent) => {
+			const container = document.getElementById('chatscreen-container');
+			if (!container) return;
+			const rect = container.getBoundingClientRect();
+			// Calculate width from the right side because preview is on the right
+			const newWidth = ((rect.right - ev.clientX) / rect.width) * 100;
+			previewWidth = Math.max(20, Math.min(80, newWidth)); // Clamp between 20% and 80%
+		};
+		const handlePointerUp = () => {
+			isResizing = false;
+			window.removeEventListener('pointermove', handlePointerMove);
+			window.removeEventListener('pointerup', handlePointerUp);
+		};
+		window.addEventListener('pointermove', handlePointerMove);
+		window.addEventListener('pointerup', handlePointerUp);
+	}
 
 	let isEmpty = $derived(
 		showCenteredEmpty && !activeConversation() && activeMessages().length === 0 && !isLoading()
@@ -388,11 +413,23 @@
 {#if isServerLoading}
 	<ServerLoadingSplash />
 {:else}
-	<div class="relative flex h-full w-full overflow-hidden bg-background">
+	<div
+		id="chatscreen-container"
+		class="relative flex h-full w-full overflow-hidden bg-background {isResizing
+			? 'pointer-events-none select-none'
+			: ''}"
+	>
 		<div
 			bind:this={chatScrollContainer}
 			aria-label="Chat interface with file drop zone"
-			class="flex h-full flex-col overflow-y-auto px-4 md:px-6 transition-all duration-300 {artifactsStore.isOpen && !artifactsStore.isFullscreen ? 'w-1/2 border-r border-border' : 'w-full'}"
+			class="flex h-full flex-col overflow-y-auto px-4 transition-all duration-300 md:px-6 {artifactsStore.isOpen &&
+			!artifactsStore.isFullscreen &&
+			!isMobile.current
+				? 'border-r border-border'
+				: ''} {isResizing ? '!duration-0' : ''}"
+			style={artifactsStore.isOpen && !artifactsStore.isFullscreen && !isMobile.current
+				? `width: ${100 - previewWidth}%`
+				: 'width: 100%'}
 			ondragenter={handleDragEnter}
 			ondragleave={handleDragLeave}
 			ondragover={handleDragOver}
@@ -449,8 +486,21 @@
 		</div>
 
 		{#if artifactsStore.isOpen}
+			{#if !artifactsStore.isFullscreen && !isMobile.current}
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div
+					class="absolute top-0 bottom-0 z-10 w-1.5 cursor-col-resize transition-colors hover:bg-border/50 active:bg-border"
+					style="left: calc({100 - previewWidth}% - 3px)"
+					onpointerdown={startResizing}
+				></div>
+			{/if}
 			<div
-				class="transition-all duration-300 {artifactsStore.isFullscreen ? 'absolute inset-0 z-[1000] w-full h-full' : 'w-1/2 h-full'}"
+				class="transition-all duration-300 {artifactsStore.isFullscreen
+					? 'fixed inset-0 z-[9999] h-screen w-screen'
+					: isMobile.current
+						? 'absolute inset-0 z-[1000] h-full w-full'
+						: 'h-full'} {isResizing ? '!duration-0' : ''}"
+				style={!artifactsStore.isFullscreen && !isMobile.current ? `width: ${previewWidth}%` : ''}
 			>
 				<ArtifactsSidebar />
 			</div>

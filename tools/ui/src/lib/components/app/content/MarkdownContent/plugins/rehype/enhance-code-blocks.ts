@@ -66,10 +66,7 @@ function createPreviewButton(codeId: string): Element {
 }
 
 function createHeader(language: string, codeId: string): Element {
-	const actions: Element[] = [
-		createCopyButton(codeId),
-		createPreviewButton(codeId)
-	];
+	const actions: Element[] = [createCopyButton(codeId), createPreviewButton(codeId)];
 
 	return {
 		type: 'element',

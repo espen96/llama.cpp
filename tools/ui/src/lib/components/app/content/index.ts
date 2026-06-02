@@ -85,4 +85,3 @@ export { default as CollapsibleContentBlock } from './CollapsibleContentBlock.sv
  * matching the layout's design system.
  */
 export { default as ArtifactsSidebar } from './ArtifactsSidebar/ArtifactsSidebar.svelte';
-

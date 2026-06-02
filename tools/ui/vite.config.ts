@@ -27,7 +27,14 @@ export default defineConfig({
 		minify: true
 	},
 
-	plugins: [tailwindcss(), sveltekit(), devtoolsJson(), llamaCppBuildPlugin(), corsProxyPlugin(), localToolsPlugin()],
+	plugins: [
+		tailwindcss(),
+		sveltekit(),
+		devtoolsJson(),
+		llamaCppBuildPlugin(),
+		corsProxyPlugin(),
+		localToolsPlugin()
+	],
 
 	test: {
 		projects: [

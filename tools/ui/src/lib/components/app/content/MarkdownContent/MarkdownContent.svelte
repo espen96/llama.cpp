@@ -628,7 +628,6 @@
 	{/if}
 </div>
 
-
 <style>
 	.markdown-block--unstable {
 		display: contents;

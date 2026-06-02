@@ -33,27 +33,34 @@
 </script>
 
 <div
-	class="artifacts-sidebar flex flex-col h-full bg-sidebar/50 backdrop-blur-lg border-l border-border overflow-hidden select-none transition-all duration-300"
+	class="artifacts-sidebar flex h-full flex-col overflow-hidden border-l border-border bg-sidebar/50 backdrop-blur-lg transition-all duration-300 select-none"
 	transition:fade={{ duration: 200 }}
 >
 	<!-- Top Bar -->
-	<div class="flex items-center justify-between p-3 border-b border-border bg-sidebar/80 backdrop-blur-md">
-		<div class="flex items-center gap-2 overflow-hidden mr-2">
-			<span class="font-semibold text-sm truncate text-foreground">{title || 'Artifact'}</span>
+	<div
+		class="flex items-center justify-between border-b border-border bg-sidebar/80 p-3 backdrop-blur-md"
+	>
+		<div class="mr-2 flex items-center gap-2 overflow-hidden">
+			<span class="truncate text-sm font-semibold text-foreground">{title || 'Artifact'}</span>
 			{#if language}
-				<span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase tracking-wider">
+				<span
+					class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-muted-foreground uppercase"
+				>
 					{language}
 				</span>
 			{/if}
 		</div>
 
 		<!-- Toggles & Actions -->
-		<div class="flex items-center gap-2 shrink-0">
+		<div class="flex shrink-0 items-center gap-2">
 			<!-- Mode Selector -->
 			{#if language?.toLowerCase() === 'html' || language?.toLowerCase() === 'xml' || language?.toLowerCase() === 'svg'}
-				<div class="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/50 mr-1">
+				<div class="mr-1 flex items-center rounded-lg border border-border/50 bg-muted/60 p-0.5">
 					<button
-						class="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-all {mode === 'preview' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
+						class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-all {mode ===
+						'preview'
+							? 'bg-background text-foreground shadow-sm'
+							: 'text-muted-foreground hover:text-foreground'}"
 						onclick={() => toggleMode('preview')}
 						type="button"
 					>
@@ -61,7 +68,10 @@
 						<span>Preview</span>
 					</button>
 					<button
-						class="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-all {mode === 'code' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
+						class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-all {mode ===
+						'code'
+							? 'bg-background text-foreground shadow-sm'
+							: 'text-muted-foreground hover:text-foreground'}"
 						onclick={() => toggleMode('code')}
 						type="button"
 					>
@@ -72,48 +82,39 @@
 			{/if}
 
 			<!-- Copy Action -->
-			<ActionIconCopyToClipboard
-				text={code}
-				canCopy={!!code}
-				ariaLabel="Copy code"
-			/>
+			<ActionIconCopyToClipboard text={code} canCopy={!!code} ariaLabel="Copy code" />
 
 			<!-- Fullscreen Toggle -->
 			<ActionIcon
 				icon={isFullscreen ? Minimize2 : Maximize2}
-				tooltip={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+				tooltip={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
 				iconSize="h-4 w-4"
 				onclick={handleToggleFullscreen}
 			/>
 
-			<div class="h-4 w-[1px] bg-border/60 mx-1"></div>
+			<div class="mx-1 h-4 w-[1px] bg-border/60"></div>
 
 			<!-- Close Action -->
-			<ActionIcon
-				icon={X}
-				tooltip="Close Sidebar"
-				iconSize="h-4 w-4"
-				onclick={handleClose}
-			/>
+			<ActionIcon icon={X} tooltip="Close Sidebar" iconSize="h-4 w-4" onclick={handleClose} />
 		</div>
 	</div>
 
 	<!-- Content Area -->
-	<div class="flex-1 min-h-0 bg-background overflow-hidden relative">
+	<div class="relative min-h-0 flex-1 overflow-hidden bg-background">
 		{#if mode === 'preview'}
 			<iframe
 				bind:this={iframeRef}
 				title="Artifact Preview"
 				sandbox="allow-scripts"
-				class="w-full h-full border-0 bg-white"
+				class="h-full w-full border-0 bg-white"
 			></iframe>
 		{:else}
-			<div class="w-full h-full overflow-auto bg-muted/30">
+			<div class="h-full w-full overflow-auto bg-muted/30">
 				<SyntaxHighlightedCode
 					{code}
 					{language}
 					maxHeight="100%"
-					class="min-h-full w-full border-0 rounded-none bg-transparent"
+					class="min-h-full w-full rounded-none border-0 bg-transparent"
 				/>
 			</div>
 		{/if}
