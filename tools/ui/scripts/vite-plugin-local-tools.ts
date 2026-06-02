@@ -67,12 +67,41 @@ export function localToolsPlugin(): Plugin {
 							if (bodyData && bodyData.tool === 'execute_javascript') {
 								try {
 									const code = bodyData.params?.code || '';
-									const context = vm.createContext({});
+									
+									// Capture console output
+									const logs: string[] = [];
+									const safeStringify = (val: any) => {
+										if (val === undefined) return 'undefined';
+										if (val === null) return 'null';
+										if (typeof val === 'object') {
+											try { return JSON.stringify(val); } catch (e) { return String(val); }
+										}
+										return String(val);
+									};
+									
+									const sandboxConsole = {
+										log: (...args: any[]) => logs.push(args.map(safeStringify).join(' ')),
+										error: (...args: any[]) => logs.push('[ERROR] ' + args.map(safeStringify).join(' ')),
+										warn: (...args: any[]) => logs.push('[WARN] ' + args.map(safeStringify).join(' ')),
+										info: (...args: any[]) => logs.push(args.map(safeStringify).join(' ')),
+									};
+									
+									const context = vm.createContext({ console: sandboxConsole });
 									const result = vm.runInContext(code, context, { timeout: 1000 });
+									
+									let finalOutput = logs.join('\n');
+									if (result !== undefined) {
+										if (finalOutput) finalOutput += '\n';
+										finalOutput += safeStringify(result);
+									}
+									
+									if (!finalOutput) {
+										finalOutput = 'undefined';
+									}
 									
 									res.statusCode = 200;
 									res.setHeader('Content-Type', 'application/json');
-									res.end(JSON.stringify({ plain_text: String(result) }));
+									res.end(JSON.stringify({ plain_text: finalOutput }));
 								} catch (error: any) {
 									res.statusCode = 200;
 									res.setHeader('Content-Type', 'application/json');
