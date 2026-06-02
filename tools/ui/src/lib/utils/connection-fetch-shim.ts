@@ -298,6 +298,11 @@ export function installConnectionFetchShim(): void {
 
 	const shimFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 		const connection = connectionsStore.activeConnection;
+
+		// Extract URL string for debugging
+		let debugUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+		console.debug(`[Shim] Fetch called: ${debugUrl}`, { hasConnection: !!connection });
+
 		if (!connection) {
 			// No custom connection — pass through unchanged
 			return originalFetch(input, init);
@@ -330,7 +335,15 @@ export function installConnectionFetchShim(): void {
 		switch (matched) {
 			case '/v1/models': {
 				const targetUrl = `${baseUrl}/v1/models${queryString}`;
-				return originalFetch(targetUrl, { ...init, headers: connectionHeaders });
+				console.debug(`[Shim] Fetching models from: ${targetUrl}`);
+				try {
+					const response = await originalFetch(targetUrl, { ...init, headers: connectionHeaders });
+					console.debug(`[Shim] Models response status: ${response.status}`);
+					return response;
+				} catch (err) {
+					console.error(`[Shim] Models fetch failed:`, err);
+					throw err;
+				}
 			}
 
 			case '/v1/chat/completions': {
