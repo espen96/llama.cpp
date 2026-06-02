@@ -76,34 +76,6 @@
 
 	let initialMessage = $state('');
 
-	// Resizable splitter state
-	let containerRefForSplit = $state<HTMLDivElement>();
-	let sidebarWidthPercent = $state(50);
-	let isResizing = $state(false);
-
-	function startResizing(event: PointerEvent) {
-		event.preventDefault();
-		isResizing = true;
-
-		const handlePointerMove = (e: PointerEvent) => {
-			if (!isResizing || !containerRefForSplit) return;
-			const rect = containerRefForSplit.getBoundingClientRect();
-			const offsetX = e.clientX - rect.left;
-			const percent = (offsetX / rect.width) * 100;
-			// Sidebar is on the right side, so sidebar width is 100 - percent
-			sidebarWidthPercent = Math.max(20, Math.min(80, 100 - percent));
-		};
-
-		const handlePointerUp = () => {
-			isResizing = false;
-			window.removeEventListener('pointermove', handlePointerMove);
-			window.removeEventListener('pointerup', handlePointerUp);
-		};
-
-		window.addEventListener('pointermove', handlePointerMove);
-		window.addEventListener('pointerup', handlePointerUp);
-	}
-
 	let isEmpty = $derived(
 		showCenteredEmpty && !activeConversation() && activeMessages().length === 0 && !isLoading()
 	);
@@ -416,12 +388,11 @@
 {#if isServerLoading}
 	<ServerLoadingSplash />
 {:else}
-	<div bind:this={containerRefForSplit} class="relative flex h-full w-full overflow-hidden bg-background">
+	<div class="relative flex h-full w-full overflow-hidden bg-background">
 		<div
 			bind:this={chatScrollContainer}
 			aria-label="Chat interface with file drop zone"
-			class="flex h-full flex-col overflow-y-auto px-4 md:px-6 {!isResizing ? 'transition-all duration-300' : ''}"
-			style={artifactsStore.isOpen && !artifactsStore.isFullscreen ? `width: ${100 - sidebarWidthPercent}%; border-right: 1px solid var(--border);` : 'width: 100%'}
+			class="flex h-full flex-col overflow-y-auto px-4 md:px-6 transition-all duration-300 {artifactsStore.isOpen && !artifactsStore.isFullscreen ? 'w-1/2 border-r border-border' : 'w-full'}"
 			ondragenter={handleDragEnter}
 			ondragleave={handleDragLeave}
 			ondragover={handleDragOver}
@@ -477,27 +448,12 @@
 			</div>
 		</div>
 
-		{#if artifactsStore.isOpen && !artifactsStore.isFullscreen}
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<div
-				class="w-1.5 h-full relative cursor-col-resize flex-shrink-0 bg-border/20 hover:bg-primary/50 transition-colors duration-200 group"
-				onpointerdown={startResizing}
-			>
-				<div class="absolute inset-y-0 left-1/2 -translate-x-1/2 w-[2px] bg-border group-hover:bg-primary/80 transition-colors"></div>
-			</div>
-		{/if}
-
 		{#if artifactsStore.isOpen}
 			<div
-				class="{!isResizing ? 'transition-all duration-300' : ''} {artifactsStore.isFullscreen ? 'absolute inset-0 z-[1000] w-full h-full' : 'h-full'}"
-				style={artifactsStore.isFullscreen ? '' : `width: ${sidebarWidthPercent}%`}
+				class="transition-all duration-300 {artifactsStore.isFullscreen ? 'absolute inset-0 z-[1000] w-full h-full' : 'w-1/2 h-full'}"
 			>
 				<ArtifactsSidebar />
 			</div>
-		{/if}
-
-		{#if isResizing}
-			<div class="absolute inset-0 z-[9999] cursor-col-resize select-none pointer-events-auto bg-transparent"></div>
 		{/if}
 	</div>
 {/if}
