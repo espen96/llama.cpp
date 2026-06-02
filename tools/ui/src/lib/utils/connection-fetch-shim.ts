@@ -150,7 +150,7 @@ function buildMockPropsResponse(): Response {
 		},
 		total_slots: 1,
 		model_path: '',
-		role: ServerRole.MODEL,
+		role: ServerRole.ROUTER,
 		modalities: { vision: false, audio: false, video: false },
 		chat_template: '',
 		bos_token: '',

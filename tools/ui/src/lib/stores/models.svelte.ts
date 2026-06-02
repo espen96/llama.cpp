@@ -90,6 +90,7 @@ class ModelsStore {
 		return this.routerModels
 			.filter(
 				(m) =>
+					!m.status ||
 					m.status.value === ServerModelStatus.LOADED ||
 					m.status.value === ServerModelStatus.SLEEPING
 			)
@@ -194,9 +195,11 @@ class ModelsStore {
 	isModelLoaded(modelId: string): boolean {
 		const model = this.routerModels.find((m) => m.id === modelId);
 
+		if (model && !model.status) return true; // OpenAI proxies default to available
+
 		return (
-			model?.status.value === ServerModelStatus.LOADED ||
-			model?.status.value === ServerModelStatus.SLEEPING
+			model?.status?.value === ServerModelStatus.LOADED ||
+			model?.status?.value === ServerModelStatus.SLEEPING
 		);
 	}
 
@@ -207,7 +210,9 @@ class ModelsStore {
 	getModelStatus(modelId: string): ServerModelStatus | null {
 		const model = this.routerModels.find((m) => m.id === modelId);
 
-		return model?.status.value ?? null;
+		if (model && !model.status) return ServerModelStatus.LOADED;
+
+		return model?.status?.value ?? null;
 	}
 
 	getModelUsage(modelId: string): SvelteSet<string> {

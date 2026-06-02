@@ -97,7 +97,9 @@ export class ModelsService {
 	 * @returns True if the model status is LOADED
 	 */
 	static isModelLoaded(model: ApiModelDataEntry): boolean {
-		return model.status.value === ServerModelStatus.LOADED;
+		// Standard OpenAI proxies (like Open WebUI) don't return a status field.
+		// We assume all their models are available/loaded.
+		return !model.status || model.status.value === ServerModelStatus.LOADED;
 	}
 
 	/**
