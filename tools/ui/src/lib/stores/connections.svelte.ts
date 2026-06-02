@@ -100,9 +100,7 @@ class ConnectionsStore {
 
 			// Validate: active id must reference an existing enabled connection
 			if (this.activeConnectionId) {
-				const exists = this.connections.find(
-					(c) => c.id === this.activeConnectionId && c.enabled
-				);
+				const exists = this.connections.find((c) => c.id === this.activeConnectionId && c.enabled);
 				if (!exists) {
 					this.activeConnectionId = null;
 				}

@@ -8,6 +8,7 @@ import devtoolsJson from 'vite-plugin-devtools-json';
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { llamaCppBuildPlugin } from './scripts/vite-plugin-llama-cpp-build';
 import { corsProxyPlugin } from './scripts/vite-plugin-cors-proxy';
+import { localToolsPlugin } from './scripts/vite-plugin-local-tools';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -26,7 +27,7 @@ export default defineConfig({
 		minify: true
 	},
 
-	plugins: [tailwindcss(), sveltekit(), devtoolsJson(), llamaCppBuildPlugin(), corsProxyPlugin()],
+	plugins: [tailwindcss(), sveltekit(), devtoolsJson(), llamaCppBuildPlugin(), corsProxyPlugin(), localToolsPlugin()],
 
 	test: {
 		projects: [
@@ -81,7 +82,6 @@ export default defineConfig({
 			'/v1': SERVER_ORIGIN,
 			'/props': SERVER_ORIGIN,
 			'/models': SERVER_ORIGIN,
-			'/tools': SERVER_ORIGIN,
 			'/slots': SERVER_ORIGIN
 		},
 		headers: {

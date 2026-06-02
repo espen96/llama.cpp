@@ -151,7 +151,7 @@ function buildMockPropsResponse(): Response {
 		total_slots: 1,
 		model_path: '',
 		role: ServerRole.ROUTER,
-		modalities: { vision: false, audio: false, video: false },
+		modalities: { vision: true, audio: false, video: false },
 		chat_template: '{{ enable_thinking }} <think></think>',
 		bos_token: '',
 		eos_token: '',
@@ -341,13 +341,13 @@ export function installConnectionFetchShim(): void {
 				console.debug(`[Shim] Fetching models from: ${targetUrl}`);
 				try {
 					const response = await originalFetch(targetUrl, { ...init, headers: connectionHeaders });
-					
+
 					// Sanitize the response to avoid Open WebUI specific fields confusing the UI
 					if (response.ok) {
 						const contentType = response.headers.get('content-type') || '';
 						if (contentType.includes('application/json')) {
 							const data = await response.json();
-							
+
 							if (data && Array.isArray(data.data)) {
 								data.data = data.data.filter((m: any) => {
 									// Filter out models that Open WebUI explicitly marks as hidden
@@ -363,7 +363,7 @@ export function installConnectionFetchShim(): void {
 										owned_by: m.owned_by || 'openai'
 									};
 								});
-								
+
 								return new Response(JSON.stringify(data), {
 									status: response.status,
 									statusText: response.statusText,
@@ -372,7 +372,7 @@ export function installConnectionFetchShim(): void {
 							}
 						}
 					}
-					
+
 					console.debug(`[Shim] Models response status: ${response.status}`);
 					return response;
 				} catch (err) {
@@ -469,22 +469,84 @@ export function installConnectionFetchShim(): void {
 			}
 
 			case '/tools': {
-				// Try upstream, then direct, then mock
-				if (upstream) {
-					const upstreamRes = await tryFetch(
-						`${baseUrl}${upstream}/tools${queryString}`,
+				if (init?.method === 'POST') {
+					let isLocalTool = false;
+					if (init.body && typeof init.body === 'string') {
+						try {
+							const bodyObj = JSON.parse(init.body);
+							if (bodyObj.tool === 'execute_javascript') {
+								isLocalTool = true;
+							}
+						} catch (e) {}
+					}
+					
+					if (isLocalTool) {
+						// Execute local tool on Vite server
+						return originalFetch(input, init);
+					}
+					
+					// Otherwise execute on upstream server
+					if (upstream) {
+						const upstreamRes = await tryFetch(
+							`${baseUrl}${upstream}/tools${queryString}`,
+							{ ...init, headers: connectionHeaders }
+						);
+						if (upstreamRes) return upstreamRes;
+					}
+
+					const directRes = await tryFetch(
+						`${baseUrl}/tools${queryString}`,
 						{ ...init, headers: connectionHeaders }
 					);
-					if (upstreamRes) return upstreamRes;
+					if (directRes) return directRes;
+
+					return buildMockResponse([]);
+				} else {
+					// GET request: fetch from both upstream and local, then merge
+					let localTools: any[] = [];
+					try {
+						const localRes = await originalFetch(input, init);
+						if (localRes.ok) {
+							const data = await localRes.json();
+							if (Array.isArray(data)) localTools = data;
+						}
+					} catch (e) {
+						console.error('[connection-shim] Error fetching local tools:', e);
+					}
+					
+					let remoteTools: any[] = [];
+					let remoteRes: Response | null = null;
+					
+					if (upstream) {
+						remoteRes = await tryFetch(
+							`${baseUrl}${upstream}/tools${queryString}`,
+							{ ...init, headers: connectionHeaders }
+						);
+					}
+					
+					if (!remoteRes) {
+						remoteRes = await tryFetch(
+							`${baseUrl}/tools${queryString}`,
+							{ ...init, headers: connectionHeaders }
+						);
+					}
+					
+					if (remoteRes && remoteRes.ok) {
+						try {
+							// clone to avoid stream consumption issues if we needed it later, though here it's fine
+							const data = await remoteRes.json();
+							if (Array.isArray(data)) remoteTools = data;
+						} catch (e) {
+							console.error('[connection-shim] Error parsing remote tools:', e);
+						}
+					}
+					
+					const merged = [...remoteTools, ...localTools];
+					return new Response(JSON.stringify(merged), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					});
 				}
-
-				const directRes = await tryFetch(
-					`${baseUrl}/tools${queryString}`,
-					{ ...init, headers: connectionHeaders }
-				);
-				if (directRes) return directRes;
-
-				return buildMockResponse([]);
 			}
 
 			case '/models/load':

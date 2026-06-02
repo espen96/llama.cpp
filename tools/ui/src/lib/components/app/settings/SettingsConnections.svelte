@@ -117,9 +117,7 @@
 		<button
 			type="button"
 			class="flex w-full items-center gap-3 rounded-lg border p-4 text-left transition-colors
-				{activeId === null
-				? 'border-primary/50 bg-primary/5'
-				: 'border-border hover:border-border/80'}"
+				{activeId === null ? 'border-primary/50 bg-primary/5' : 'border-border hover:border-border/80'}"
 			onclick={() => activateConnection(null)}
 		>
 			<div
@@ -133,9 +131,7 @@
 				<div class="truncate text-sm text-muted-foreground">Built-in (served from same origin)</div>
 			</div>
 			{#if activeId === null}
-				<span
-					class="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary"
-				>
+				<span class="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
 					Active
 				</span>
 			{/if}
@@ -145,9 +141,7 @@
 		{#each connections as conn (conn.id)}
 			<div
 				class="rounded-lg border transition-colors
-					{activeId === conn.id
-					? 'border-primary/50 bg-primary/5'
-					: 'border-border'}"
+					{activeId === conn.id ? 'border-primary/50 bg-primary/5' : 'border-border'}"
 			>
 				<button
 					type="button"
@@ -160,9 +154,7 @@
 				>
 					<div
 						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full
-							{activeId === conn.id
-							? 'bg-primary/15 text-primary'
-							: 'bg-muted text-muted-foreground'}"
+							{activeId === conn.id ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'}"
 					>
 						<Plug class="h-4 w-4" />
 					</div>
@@ -176,18 +168,14 @@
 						</div>
 					</div>
 					{#if activeId === conn.id}
-						<span
-							class="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary"
-						>
+						<span class="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
 							Active
 						</span>
 					{/if}
 				</button>
 
 				<div class="flex items-center gap-1 border-t border-border/50 px-4 py-2">
-					<Button variant="ghost" size="sm" onclick={() => startEdit(conn)}>
-						Edit
-					</Button>
+					<Button variant="ghost" size="sm" onclick={() => startEdit(conn)}>Edit</Button>
 					<Button
 						variant="ghost"
 						size="sm"
@@ -219,7 +207,10 @@
 
 	<!-- Add / Edit form -->
 	{#if isAdding || editingId}
-		<div class="mt-4 space-y-4 rounded-lg border border-border bg-card p-4" in:fade={{ duration: 100 }}>
+		<div
+			class="mt-4 space-y-4 rounded-lg border border-border bg-card p-4"
+			in:fade={{ duration: 100 }}
+		>
 			<h4 class="text-sm font-semibold">
 				{editingId ? 'Edit Connection' : 'New Connection'}
 			</h4>
@@ -287,7 +278,8 @@
 						class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
 					/>
 					<p class="mt-1 text-xs text-muted-foreground">
-						For llama-swap proxies. Gives access to props, slots, tools on the upstream llama.cpp backend.
+						For llama-swap proxies. Gives access to props, slots, tools on the upstream llama.cpp
+						backend.
 					</p>
 				</div>
 			</div>
@@ -296,9 +288,7 @@
 				<Button size="sm" onclick={saveConnection}>
 					{editingId ? 'Save' : 'Add'}
 				</Button>
-				<Button variant="ghost" size="sm" onclick={resetForm}>
-					Cancel
-				</Button>
+				<Button variant="ghost" size="sm" onclick={resetForm}>Cancel</Button>
 			</div>
 		</div>
 	{/if}

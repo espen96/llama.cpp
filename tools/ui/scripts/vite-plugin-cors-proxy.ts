@@ -15,7 +15,10 @@ export function corsProxyPlugin(): Plugin {
 						res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
 						res.setHeader('Access-Control-Allow-Credentials', 'true');
 						res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-						res.setHeader('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] || '*');
+						res.setHeader(
+							'Access-Control-Allow-Headers',
+							req.headers['access-control-request-headers'] || '*'
+						);
 						res.end();
 						return;
 					}
@@ -93,8 +96,14 @@ export function corsProxyPlugin(): Plugin {
 									// Add CORS headers so localhost can read it
 									res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
 									res.setHeader('Access-Control-Allow-Credentials', 'true');
-									res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-									res.setHeader('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] || '*');
+									res.setHeader(
+										'Access-Control-Allow-Methods',
+										'GET, POST, PUT, DELETE, OPTIONS, PATCH'
+									);
+									res.setHeader(
+										'Access-Control-Allow-Headers',
+										req.headers['access-control-request-headers'] || '*'
+									);
 
 									// Pipe response
 									clientRes.pipe(res);
