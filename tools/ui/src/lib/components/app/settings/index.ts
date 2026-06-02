@@ -74,3 +74,11 @@ export { default as SettingsChatFields } from './SettingsChat/SettingsChatFields
  * server favicons and permission management controls.
  */
 export { default as SettingsChatToolsTab } from './SettingsChat/SettingsChatToolsTab.svelte';
+
+/**
+ * **SettingsConnections** - Connection management settings tab
+ *
+ * Allows adding, editing, removing, and switching between multiple server
+ * connections (local, remote llama.cpp, Ollama, llama-swap proxies, etc.).
+ */
+export { default as SettingsConnections } from './SettingsConnections.svelte';

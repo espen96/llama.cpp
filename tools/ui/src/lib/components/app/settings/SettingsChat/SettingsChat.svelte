@@ -5,6 +5,7 @@
 		SettingsChatImportExportTab,
 		SettingsChatMobileHeader,
 		SettingsChatToolsTab,
+		SettingsConnections,
 		SettingsFooter
 	} from '$lib/components/app/settings';
 	import { config, settingsStore } from '$lib/stores/settings.svelte';
@@ -156,6 +157,8 @@
 						<SettingsChatToolsTab />
 					{:else if currentSection.title === SETTINGS_SECTION_TITLES.IMPORT_EXPORT}
 						<SettingsChatImportExportTab />
+					{:else if currentSection.title === SETTINGS_SECTION_TITLES.CONNECTIONS}
+						<SettingsConnections />
 					{:else if currentSection.fields}
 						<div class="space-y-6">
 							<SettingsChatFields

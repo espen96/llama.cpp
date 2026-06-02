@@ -2,6 +2,7 @@ import { base } from '$app/paths';
 import { error } from '@sveltejs/kit';
 import { browser } from '$app/environment';
 import { config } from '$lib/stores/settings.svelte';
+import { connectionsStore } from '$lib/stores/connections.svelte';
 
 /**
  * Validates API key by making a request to the server props endpoint
@@ -9,6 +10,11 @@ import { config } from '$lib/stores/settings.svelte';
  */
 export async function validateApiKey(fetch: typeof globalThis.fetch): Promise<void> {
 	if (!browser) {
+		return;
+	}
+
+	// Skip validation when using a custom connection — the local server may not be running
+	if (connectionsStore.isCustomConnectionActive) {
 		return;
 	}
 

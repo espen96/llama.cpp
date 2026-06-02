@@ -30,6 +30,7 @@
 	import { useSettingsNavigation } from '$lib/hooks/use-settings-navigation.svelte';
 	import { conversations } from '$lib/stores/conversations.svelte';
 	import { isMobile } from '$lib/stores/viewport.svelte';
+	import { installConnectionFetchShim } from '$lib/utils/connection-fetch-shim';
 
 	let { children } = $props();
 	let alwaysShowSidebarOnDesktop = $derived(config().alwaysShowSidebarOnDesktop);
@@ -137,6 +138,7 @@
 	}
 
 	onMount(() => {
+		installConnectionFetchShim();
 		mounted = true;
 	});
 
