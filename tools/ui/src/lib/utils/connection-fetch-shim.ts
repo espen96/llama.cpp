@@ -180,7 +180,15 @@ function buildMockResponse(data: unknown): Response {
 async function tryFetch(url: string, init?: RequestInit): Promise<Response | null> {
 	try {
 		const res = await originalFetch(url, init);
-		if (res.ok) return res;
+		if (res.ok) {
+			// Some proxies (like Open WebUI) are SPAs that return index.html (200 OK)
+			// for unknown endpoints instead of a 404 JSON response.
+			const contentType = res.headers.get('content-type') || '';
+			if (contentType.includes('text/html')) {
+				return null;
+			}
+			return res;
+		}
 		return null;
 	} catch {
 		return null;
@@ -288,7 +296,7 @@ export function installConnectionFetchShim(): void {
 	originalFetch = window.fetch.bind(window);
 	shimInstalled = true;
 
-	window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+	const shimFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 		const connection = connectionsStore.activeConnection;
 		if (!connection) {
 			// No custom connection — pass through unchanged
@@ -306,6 +314,8 @@ export function installConnectionFetchShim(): void {
 			// Not an intercepted path — pass through
 			return originalFetch(input, init);
 		}
+
+		console.debug(`[Shim] Intercepting ${matched} -> ${connection.url}`);
 
 		const baseUrl = connection.url.replace(/\/+$/, '');
 		const upstream = connection.upstreamPath?.replace(/\/+$/, '') || '';
@@ -419,6 +429,9 @@ export function installConnectionFetchShim(): void {
 		}
 	};
 
+	window.fetch = shimFetch;
+	globalThis.fetch = shimFetch;
+
 	console.info('[connection-shim] Fetch shim installed');
 }
 
@@ -428,6 +441,7 @@ export function installConnectionFetchShim(): void {
 export function uninstallConnectionFetchShim(): void {
 	if (shimInstalled && originalFetch) {
 		window.fetch = originalFetch;
+		globalThis.fetch = originalFetch;
 		shimInstalled = false;
 		console.info('[connection-shim] Fetch shim uninstalled');
 	}

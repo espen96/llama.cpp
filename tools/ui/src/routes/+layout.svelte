@@ -137,8 +137,11 @@
 		}
 	}
 
-	onMount(() => {
+	if (browser) {
 		installConnectionFetchShim();
+	}
+
+	onMount(() => {
 		mounted = true;
 	});
 
