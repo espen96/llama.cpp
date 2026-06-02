@@ -7,6 +7,7 @@ import { defineConfig, searchForWorkspaceRoot } from 'vite';
 import devtoolsJson from 'vite-plugin-devtools-json';
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { llamaCppBuildPlugin } from './scripts/vite-plugin-llama-cpp-build';
+import { corsProxyPlugin } from './scripts/vite-plugin-cors-proxy';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -25,7 +26,7 @@ export default defineConfig({
 		minify: true
 	},
 
-	plugins: [tailwindcss(), sveltekit(), devtoolsJson(), llamaCppBuildPlugin()],
+	plugins: [tailwindcss(), sveltekit(), devtoolsJson(), llamaCppBuildPlugin(), corsProxyPlugin()],
 
 	test: {
 		projects: [
@@ -81,8 +82,7 @@ export default defineConfig({
 			'/props': SERVER_ORIGIN,
 			'/models': SERVER_ORIGIN,
 			'/tools': SERVER_ORIGIN,
-			'/slots': SERVER_ORIGIN,
-			'/cors-proxy': SERVER_ORIGIN
+			'/slots': SERVER_ORIGIN
 		},
 		headers: {
 			'Cross-Origin-Embedder-Policy': 'require-corp',

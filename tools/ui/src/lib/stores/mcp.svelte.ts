@@ -95,7 +95,7 @@ class MCPStore {
 	private activeFlowCount = 0;
 
 	get isProxyAvailable(): boolean {
-		return serverStore.props?.cors_proxy_enabled ?? false;
+		return import.meta.env.DEV || (serverStore.props?.cors_proxy_enabled ?? false);
 	}
 
 	/**
