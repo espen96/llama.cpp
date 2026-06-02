@@ -77,3 +77,12 @@ export { default as SyntaxHighlightedCode } from './SyntaxHighlightedCode.svelte
  * ```
  */
 export { default as CollapsibleContentBlock } from './CollapsibleContentBlock.svelte';
+
+/**
+ * **ArtifactsSidebar** - Right-side panel for rich artifact canvas rendering
+ *
+ * Renders HTML previews and syntax-highlighted code in a beautiful sidebar
+ * matching the layout's design system.
+ */
+export { default as ArtifactsSidebar } from './ArtifactsSidebar/ArtifactsSidebar.svelte';
+

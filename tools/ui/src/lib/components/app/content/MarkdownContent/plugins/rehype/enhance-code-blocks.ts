@@ -66,11 +66,10 @@ function createPreviewButton(codeId: string): Element {
 }
 
 function createHeader(language: string, codeId: string): Element {
-	const actions: Element[] = [createCopyButton(codeId)];
-
-	if (language.toLowerCase() === 'html') {
-		actions.push(createPreviewButton(codeId));
-	}
+	const actions: Element[] = [
+		createCopyButton(codeId),
+		createPreviewButton(codeId)
+	];
 
 	return {
 		type: 'element',

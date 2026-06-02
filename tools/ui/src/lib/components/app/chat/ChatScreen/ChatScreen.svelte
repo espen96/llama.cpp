@@ -13,8 +13,10 @@
 		DialogChatError,
 		ServerLoadingSplash,
 		DialogConfirmation,
-		ChatScreenServerError
+		ChatScreenServerError,
+		ArtifactsSidebar
 	} from '$lib/components/app';
+	import { artifactsStore } from '$lib/stores/artifacts.svelte';
 	import { setProcessingInfoContext } from '$lib/contexts';
 	import { ErrorDialogType } from '$lib/enums';
 	import { createAutoScrollController } from '$lib/hooks/use-auto-scroll.svelte';
@@ -386,63 +388,73 @@
 {#if isServerLoading}
 	<ServerLoadingSplash />
 {:else}
-	<div
-		bind:this={chatScrollContainer}
-		aria-label="Chat interface with file drop zone"
-		class="flex h-full flex-col overflow-y-auto px-4 md:px-6"
-		ondragenter={handleDragEnter}
-		ondragleave={handleDragLeave}
-		ondragover={handleDragOver}
-		ondrop={handleDrop}
-		onscroll={handleScroll}
-		role="main"
-	>
-		<div class="flex grow flex-col pt-14">
-			{#if !isEmpty}
-				<ChatMessages
-					messages={activeMessages()}
-					onMessagesReady={handleMessagesReady}
-					onUserAction={() => {
-						autoScroll.enable();
-						if (!autoScroll.userScrolledUp) {
-							autoScroll.scrollToBottom();
-						}
-					}}
-				/>
-			{/if}
-
-			<div
-				class={[
-					'pointer-events-none sticky right-4 left-4 mt-auto transition-all duration-200',
-					isEmpty ? 'bottom-[calc(50dvh-7rem)]' : 'bottom-4 pt-24 md:pt-32'
-				]}
-			>
-				<ChatScreenGreeting {isEmpty} />
-
-				<ChatScreenActionScrollDown
-					container={chatScrollContainer}
-					hasProcessingInfoVisible={processingInfoVisible}
-				/>
-
-				<ChatScreenProcessingInfo onVisibilityChange={handleProcessingInfoVisibility} />
-
-				<ChatScreenServerError />
-
-				<div class="conversation-chat-form pointer-events-auto rounded-t-3xl">
-					<ChatScreenForm
-						disabled={hasPropsError || isEditing()}
-						{initialMessage}
-						isLoading={isCurrentConversationLoading}
-						onFileRemove={handleFileRemove}
-						onFileUpload={handleFileUpload}
-						onSend={handleSendMessage}
-						onStop={() => chatStore.stopGeneration()}
-						onSystemPromptAdd={handleSystemPromptAdd}
-						bind:uploadedFiles
+	<div class="relative flex h-full w-full overflow-hidden bg-background">
+		<div
+			bind:this={chatScrollContainer}
+			aria-label="Chat interface with file drop zone"
+			class="flex h-full flex-col overflow-y-auto px-4 md:px-6 transition-all duration-300 {artifactsStore.isOpen && !artifactsStore.isFullscreen ? 'w-1/2 border-r border-border' : 'w-full'}"
+			ondragenter={handleDragEnter}
+			ondragleave={handleDragLeave}
+			ondragover={handleDragOver}
+			ondrop={handleDrop}
+			onscroll={handleScroll}
+			role="main"
+		>
+			<div class="flex grow flex-col pt-14">
+				{#if !isEmpty}
+					<ChatMessages
+						messages={activeMessages()}
+						onMessagesReady={handleMessagesReady}
+						onUserAction={() => {
+							autoScroll.enable();
+							if (!autoScroll.userScrolledUp) {
+								autoScroll.scrollToBottom();
+							}
+						}}
 					/>
+				{/if}
+
+				<div
+					class={[
+						'pointer-events-none sticky right-4 left-4 mt-auto transition-all duration-200',
+						isEmpty ? 'bottom-[calc(50dvh-7rem)]' : 'bottom-4 pt-24 md:pt-32'
+					]}
+				>
+					<ChatScreenGreeting {isEmpty} />
+
+					<ChatScreenActionScrollDown
+						container={chatScrollContainer}
+						hasProcessingInfoVisible={processingInfoVisible}
+					/>
+
+					<ChatScreenProcessingInfo onVisibilityChange={handleProcessingInfoVisibility} />
+
+					<ChatScreenServerError />
+
+					<div class="conversation-chat-form pointer-events-auto rounded-t-3xl">
+						<ChatScreenForm
+							disabled={hasPropsError || isEditing()}
+							{initialMessage}
+							isLoading={isCurrentConversationLoading}
+							onFileRemove={handleFileRemove}
+							onFileUpload={handleFileUpload}
+							onSend={handleSendMessage}
+							onStop={() => chatStore.stopGeneration()}
+							onSystemPromptAdd={handleSystemPromptAdd}
+							bind:uploadedFiles
+						/>
+					</div>
 				</div>
 			</div>
 		</div>
+
+		{#if artifactsStore.isOpen}
+			<div
+				class="transition-all duration-300 {artifactsStore.isFullscreen ? 'absolute inset-0 z-[1000] w-full h-full' : 'w-1/2 h-full'}"
+			>
+				<ArtifactsSidebar />
+			</div>
+		{/if}
 	</div>
 {/if}
 

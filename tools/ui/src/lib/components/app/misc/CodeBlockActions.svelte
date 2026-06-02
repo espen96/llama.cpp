@@ -12,7 +12,7 @@
 
 	let { code, language, disabled = false, onPreview }: Props = $props();
 
-	const showPreview = $derived(language?.toLowerCase() === FileTypeText.HTML);
+	const showPreview = true;
 </script>
 
 <div class="code-block-actions">

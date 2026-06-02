@@ -34,7 +34,8 @@
 	import githubDarkCss from 'highlight.js/styles/github-dark.css?inline';
 	import githubLightCss from 'highlight.js/styles/github.css?inline';
 	import { mode } from 'mode-watcher';
-	import { CodeBlockActions, DialogCodePreview } from '$lib/components/app';
+	import { CodeBlockActions } from '$lib/components/app';
+	import { artifactsStore } from '$lib/stores/artifacts.svelte';
 	import { createAutoScrollController } from '$lib/hooks/use-auto-scroll.svelte';
 	import type { DatabaseMessageExtra } from '$lib/types/database';
 	import { config } from '$lib/stores/settings.svelte';
@@ -59,9 +60,6 @@
 	let renderedBlocks = $state<MarkdownBlock[]>([]);
 	let unstableBlockHtml = $state('');
 	let incompleteCodeBlock = $state<IncompleteCodeBlock | null>(null);
-	let previewDialogOpen = $state(false);
-	let previewCode = $state('');
-	let previewLanguage = $state('text');
 	let streamingCodeScrollContainer = $state<HTMLDivElement>();
 
 	// Auto-scroll controller for streaming code block content
@@ -285,22 +283,8 @@
 	}
 
 	/**
-	 * Handles preview dialog open state changes.
-	 * Clears preview content when dialog is closed.
-	 * @param open - Whether the dialog is being opened or closed
-	 */
-	function handlePreviewDialogOpenChange(open: boolean) {
-		previewDialogOpen = open;
-
-		if (!open) {
-			previewCode = '';
-			previewLanguage = 'text';
-		}
-	}
-
-	/**
-	 * Handles click events on preview buttons within HTML code blocks.
-	 * Opens a preview dialog with the rendered HTML content.
+	 * Handles click events on preview buttons within code blocks.
+	 * Opens the Artifacts Sidebar with the raw content and mode toggles.
 	 * @param event - The click event from the preview button
 	 */
 	function handlePreviewClick(event: Event) {
@@ -319,9 +303,7 @@
 			return;
 		}
 
-		previewCode = info.rawCode;
-		previewLanguage = info.language;
-		previewDialogOpen = true;
+		artifactsStore.open(info.rawCode, info.language, 'Artifact Preview');
 	}
 
 	/**
@@ -625,9 +607,7 @@
 					language={incompleteCodeBlock.language || 'text'}
 					disabled
 					onPreview={(code, lang) => {
-						previewCode = code;
-						previewLanguage = lang;
-						previewDialogOpen = true;
+						artifactsStore.open(code, lang, 'Artifact Preview');
 					}}
 				/>
 			</div>
@@ -648,12 +628,6 @@
 	{/if}
 </div>
 
-<DialogCodePreview
-	open={previewDialogOpen}
-	code={previewCode}
-	language={previewLanguage}
-	onOpenChange={handlePreviewDialogOpenChange}
-/>
 
 <style>
 	.markdown-block--unstable {
