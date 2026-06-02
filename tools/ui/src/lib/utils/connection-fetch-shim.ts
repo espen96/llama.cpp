@@ -348,8 +348,22 @@ export function installConnectionFetchShim(): void {
 
 			case '/v1/chat/completions': {
 				const targetUrl = `${baseUrl}/v1/chat/completions`;
+				let modifiedInit = { ...init };
+
+				if (init?.body && typeof init.body === 'string') {
+					try {
+						const bodyObj = JSON.parse(init.body);
+						if (!bodyObj.chat_id) {
+							bodyObj.chat_id = 'dummy';
+							modifiedInit.body = JSON.stringify(bodyObj);
+						}
+					} catch (e) {
+						console.warn('[Shim] Failed to parse and patch chat completions request body:', e);
+					}
+				}
+
 				const response = await originalFetch(targetUrl, {
-					...init,
+					...modifiedInit,
 					headers: connectionHeaders
 				});
 				// Patch SSE stream to inject chat_id if it's a streaming response
