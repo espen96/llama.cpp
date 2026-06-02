@@ -199,7 +199,7 @@ async function tryFetch(url: string, init?: RequestInit): Promise<Response | nul
  * Patch an SSE stream to inject chat_id into each data chunk if missing.
  * This fixes compatibility with Open WebUI proxy.
  */
-function patchSSEStream(response: Response): Response {
+function patchSSEStream(response: Response, requestedModel?: string): Response {
 	const body = response.body;
 	if (!body) return response;
 
@@ -225,6 +225,9 @@ function patchSSEStream(response: Response): Response {
 						const data = JSON.parse(line.slice(6));
 						if (!data.chat_id) {
 							data.chat_id = 'dummy';
+						}
+						if (requestedModel) {
+							data.model = requestedModel;
 						}
 						patched.push('data: ' + JSON.stringify(data));
 					} catch {
@@ -381,10 +384,12 @@ export function installConnectionFetchShim(): void {
 			case '/v1/chat/completions': {
 				const targetUrl = `${baseUrl}/v1/chat/completions`;
 				let modifiedInit = { ...init };
+				let requestedModel = '';
 
 				if (init?.body && typeof init.body === 'string') {
 					try {
 						const bodyObj = JSON.parse(init.body);
+						requestedModel = bodyObj.model || '';
 						if (!bodyObj.chat_id) {
 							bodyObj.chat_id = 'dummy';
 							modifiedInit.body = JSON.stringify(bodyObj);
@@ -401,7 +406,19 @@ export function installConnectionFetchShim(): void {
 				// Patch SSE stream to inject chat_id if it's a streaming response
 				const contentType = response.headers.get('content-type') || '';
 				if (contentType.includes('text/event-stream')) {
-					return patchSSEStream(response);
+					return patchSSEStream(response, requestedModel);
+				} else if (contentType.includes('application/json') && requestedModel) {
+					try {
+						const data = await response.json();
+						data.model = requestedModel;
+						return new Response(JSON.stringify(data), {
+							status: response.status,
+							statusText: response.statusText,
+							headers: response.headers
+						});
+					} catch (e) {
+						// Fallback to returning the response as is
+					}
 				}
 				return response;
 			}
