@@ -152,7 +152,7 @@ function buildMockPropsResponse(): Response {
 		model_path: '',
 		role: ServerRole.ROUTER,
 		modalities: { vision: false, audio: false, video: false },
-		chat_template: '',
+		chat_template: '{{ enable_thinking }} <think></think>',
 		bos_token: '',
 		eos_token: '',
 		build_info: 'custom-connection'
