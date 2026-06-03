@@ -16,6 +16,7 @@ import { DatabaseService } from '$lib/services/database.service';
 import { ChatService } from '$lib/services/chat.service';
 import { startBackgroundChat, reconnectBackgroundChat, getActiveTasks, abortTask } from '$lib/services/chat-api.service';
 import { conversationsStore } from '$lib/stores/conversations.svelte';
+import { toolsStore } from '$lib/stores/tools.svelte';
 import { config } from '$lib/stores/settings.svelte';
 import { agenticStore } from '$lib/stores/agentic.svelte';
 import { mcpStore } from '$lib/stores/mcp.svelte';
@@ -268,7 +269,7 @@ class ChatStore {
 
 	private reconnectToTask(task: any): void {
 		const convId = task.conversationId;
-		const messageId = task.assistantMessageId;
+		let messageId = task.assistantMessageId;
 		let streamedContent = task.accumulatedContent || '';
 		let streamedReasoning = task.accumulatedReasoning || '';
 
@@ -338,6 +339,59 @@ class ChatStore {
 					this.clearChatStreaming(convId);
 					this.setProcessingState(convId, null);
 					console.error('Reconnect stream error:', error);
+				},
+				onToolCallChunk: (toolCalls: any) => {
+					const idx = conversationsStore.findMessageIndex(messageId);
+					if (idx !== -1) {
+						conversationsStore.updateMessageAtIndex(idx, {
+							toolCalls: JSON.stringify(toolCalls)
+						});
+					}
+				},
+				onAssistantMessageCreated: (newMsgId: string, parentId: string) => {
+					const newMsg: DatabaseMessage = {
+						id: newMsgId,
+						convId,
+						type: MessageType.TEXT,
+						role: MessageRole.ASSISTANT,
+						content: '',
+						timestamp: Date.now(),
+						toolCalls: '',
+						children: [],
+						parent: parentId
+					};
+					conversationsStore.addMessageToActive(newMsg);
+					messageId = newMsgId;
+					streamedContent = '';
+					streamedReasoning = '';
+				},
+				onToolResultCreated: (newMsgId: string, toolCallId: string, content: string, parentId: string) => {
+					const newMsg: DatabaseMessage = {
+						id: newMsgId,
+						convId,
+						type: MessageType.TEXT,
+						role: MessageRole.TOOL,
+						content,
+						toolCallId,
+						timestamp: Date.now(),
+						toolCalls: '',
+						children: [],
+						parent: parentId
+					};
+					conversationsStore.addMessageToActive(newMsg);
+					conversationsStore.updateCurrentNode(newMsgId).catch(console.error);
+				},
+				onPermissionRequest: async (requestId: string, toolName: string, serverLabel: string) => {
+					try {
+						const decision = await agenticStore.requestPermission(convId, toolName, serverLabel, abortController.signal);
+						await fetch(`/api/chat/${encodeURIComponent(task.taskId)}/permission`, {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({ requestId, decision })
+						});
+					} catch (err) {
+						console.error('[chatStore] Error resolving tool permission during reconnect:', err);
+					}
 				}
 			},
 			undefined // backend owns connection
@@ -1019,7 +1073,8 @@ class ChatStore {
 		// to SQLite regardless of whether this SSE connection stays open.
 		const apiOptions = {
 			...this.getApiOptions(),
-			...(effectiveModel ? { model: effectiveModel } : {})
+			...(effectiveModel ? { model: effectiveModel } : {}),
+			tools: toolsStore.getEnabledToolsForLLM()
 		};
 
 		const oaiBody = await ChatService.buildOaiRequestBody(allMessages, apiOptions);
@@ -1040,8 +1095,59 @@ class ChatStore {
 					},
 					onChunk: streamCallbacks.onChunk,
 					onReasoningChunk: streamCallbacks.onReasoningChunk,
+					onToolCallChunk: streamCallbacks.onToolCallsStreaming,
 					onModel: streamCallbacks.onModel,
 					onCompletionId: streamCallbacks.onCompletionId,
+					onAssistantMessageCreated: (messageId: string, parentId: string) => {
+						const newMsg: DatabaseMessage = {
+							id: messageId,
+							convId,
+							type: MessageType.TEXT,
+							role: MessageRole.ASSISTANT,
+							content: '',
+							timestamp: Date.now(),
+							toolCalls: '',
+							children: [],
+							parent: parentId
+						};
+						conversationsStore.addMessageToActive(newMsg);
+						currentMessageId = messageId;
+						streamedContent = '';
+						streamedReasoningContent = '';
+					},
+					onToolResultCreated: (messageId: string, toolCallId: string, content: string, parentId: string) => {
+						const newMsg: DatabaseMessage = {
+							id: messageId,
+							convId,
+							type: MessageType.TEXT,
+							role: MessageRole.TOOL,
+							content,
+							toolCallId,
+							timestamp: Date.now(),
+							toolCalls: '',
+							children: [],
+							parent: parentId
+						};
+						conversationsStore.addMessageToActive(newMsg);
+						conversationsStore.updateCurrentNode(messageId).catch(console.error);
+					},
+					onPermissionRequest: async (requestId: string, toolName: string, serverLabel: string) => {
+						try {
+							const decision = await agenticStore.requestPermission(convId, toolName, serverLabel, abortController.signal);
+							const currentTaskId = this.chatActiveTaskIds.get(convId);
+							if (!currentTaskId) {
+								console.error('[chatStore] No active taskId found when permission decision resolved');
+								return;
+							}
+							await fetch(`/api/chat/${encodeURIComponent(currentTaskId)}/permission`, {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify({ requestId, decision })
+							});
+						} catch (err) {
+							console.error('[chatStore] Error resolving tool permission:', err);
+						}
+					},
 					onComplete: async (content: string, reasoningContent?: string) => {
 						this.chatActiveTaskIds.delete(convId);
 						// The backend has already written to SQLite; we just update the UI

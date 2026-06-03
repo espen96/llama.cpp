@@ -7,6 +7,7 @@ import * as settings from './sqlite/settings.js';
 import * as llamaStream from './background/llama-stream.js';
 import * as taskManager from './background/task-manager.js';
 import * as sseHub from './background/sse-hub.js';
+import * as pendingPermissions from './background/pending-permissions.js';
 export function sqliteApiPlugin(): Plugin {
     return {
         name: 'vite-plugin-sqlite-api',
@@ -259,6 +260,28 @@ export function sqliteApiPlugin(): Plugin {
                     const aborted = taskManager.abortTask(req.params.taskId);
                     if (!aborted) {
                         res.status(404).json({ error: 'Task not found or already finished' });
+                        return;
+                    }
+                    res.json({ success: true });
+                } catch (e: any) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+            /**
+             * POST /api/chat/:taskId/permission
+             * Browser posts the user's tool permission decision here.
+             * Body: { requestId, decision: 'once' | 'always' | 'always_server' | 'deny' }
+             */
+            app.post('/chat/:taskId/permission', (req, res) => {
+                try {
+                    const { requestId, decision } = req.body;
+                    if (!requestId || !decision) {
+                        res.status(400).json({ error: 'requestId and decision are required' });
+                        return;
+                    }
+                    const resolved = pendingPermissions.resolvePermission(requestId, decision);
+                    if (!resolved) {
+                        res.status(404).json({ error: 'Permission request not found or already resolved' });
                         return;
                     }
                     res.json({ success: true });

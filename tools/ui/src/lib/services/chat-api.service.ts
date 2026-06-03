@@ -31,13 +31,16 @@ export interface ChatStreamCallbacksBackground {
 	onTaskId?: (taskId: string) => void;
 	onChunk?: (chunk: string) => void;
 	onReasoningChunk?: (chunk: string) => void;
-	/** Called with the raw tool_calls delta array from each SSE chunk */
-	onToolCallChunk?: (delta: unknown) => void;
+	/** Called with the normalized tool_calls array */
+	onToolCallChunk?: (toolCalls: any) => void;
 	onModel?: (model: string) => void;
 	onCompletionId?: (id: string) => void;
 	onTimings?: (timings: ChatMessageTimings) => void;
 	onComplete?: (content: string, reasoningContent?: string) => Promise<void>;
 	onError?: (error: Error) => void;
+	onPermissionRequest?: (requestId: string, toolName: string, serverLabel: string) => void;
+	onAssistantMessageCreated?: (messageId: string, parentId: string) => void;
+	onToolResultCreated?: (messageId: string, toolCallId: string, content: string, parentId: string) => void;
 }
 
 /**
@@ -129,6 +132,68 @@ export function startBackgroundChat(
 			callbacks.onError?.(new Error((errorObj as { message?: string })?.message || 'Stream error'));
 		});
 
+		// Backend agentic loop: tool call started
+		eventSource.addEventListener('tool_call', (event) => {
+			const data = (event as MessageEvent).data;
+			try {
+				const parsed = JSON.parse(data);
+				if (parsed && typeof parsed.name === 'string') {
+					// Normalize to OAI ApiChatCompletionToolCall format array
+					const normalized = [
+						{
+							id: parsed.id || '',
+							type: 'function',
+							function: {
+								name: parsed.name,
+								arguments: parsed.arguments || ''
+							}
+						}
+					];
+					callbacks.onToolCallChunk?.(normalized);
+				}
+			} catch { /* ignore */ }
+		});
+
+		// Backend agentic loop: tool result received
+		eventSource.addEventListener('tool_result', (event) => {
+			const data = (event as MessageEvent).data;
+			try {
+				const parsed = JSON.parse(data);
+				if (parsed && typeof parsed.messageId === 'string') {
+					callbacks.onToolResultCreated?.(
+						parsed.messageId,
+						parsed.id,
+						parsed.content,
+						parsed.parentId
+					);
+				}
+			} catch { /* ignore */ }
+		});
+
+		// Backend agentic loop: new assistant message turn started
+		eventSource.addEventListener('assistant_message', (event) => {
+			const data = (event as MessageEvent).data;
+			try {
+				const parsed = JSON.parse(data);
+				if (parsed && typeof parsed.messageId === 'string') {
+					accumulatedContent = '';
+					accumulatedReasoning = '';
+					callbacks.onAssistantMessageCreated?.(parsed.messageId, parsed.parentId);
+				}
+			} catch { /* ignore */ }
+		});
+
+		// Backend agentic loop: permission requested
+		eventSource.addEventListener('permission_request', (event) => {
+			const data = (event as MessageEvent).data;
+			try {
+				const parsed = JSON.parse(data);
+				if (parsed && typeof parsed.requestId === 'string' && typeof parsed.toolName === 'string') {
+					callbacks.onPermissionRequest?.(parsed.requestId, parsed.toolName, parsed.serverLabel || '');
+				}
+			} catch { /* ignore */ }
+		});
+
 		// Fallback: if connection closes without done event
 		eventSource.onerror = () => {
 			// EventSource will auto-retry; we only care if the task is done
@@ -189,7 +254,7 @@ export function startBackgroundChat(
 						pendingToolCalls[idx].function.name = tc.function.name;
 					}
 				}
-				callbacks.onToolCallChunk?.(delta.tool_calls);
+				callbacks.onToolCallChunk?.(Object.values(pendingToolCalls));
 			}
 
 			// Parse timings from timings field if present
@@ -278,6 +343,68 @@ export function reconnectBackgroundChat(
 			callbacks.onError?.(new Error((errorObj as { message?: string })?.message || 'Stream error'));
 		});
 
+		// Backend agentic loop: tool call started
+		eventSource.addEventListener('tool_call', (event) => {
+			const data = (event as MessageEvent).data;
+			try {
+				const parsed = JSON.parse(data);
+				if (parsed && typeof parsed.name === 'string') {
+					// Normalize to OAI ApiChatCompletionToolCall format array
+					const normalized = [
+						{
+							id: parsed.id || '',
+							type: 'function',
+							function: {
+								name: parsed.name,
+								arguments: parsed.arguments || ''
+							}
+						}
+					];
+					callbacks.onToolCallChunk?.(normalized);
+				}
+			} catch { /* ignore */ }
+		});
+
+		// Backend agentic loop: tool result received
+		eventSource.addEventListener('tool_result', (event) => {
+			const data = (event as MessageEvent).data;
+			try {
+				const parsed = JSON.parse(data);
+				if (parsed && typeof parsed.messageId === 'string') {
+					callbacks.onToolResultCreated?.(
+						parsed.messageId,
+						parsed.id,
+						parsed.content,
+						parsed.parentId
+					);
+				}
+			} catch { /* ignore */ }
+		});
+
+		// Backend agentic loop: new assistant message turn started
+		eventSource.addEventListener('assistant_message', (event) => {
+			const data = (event as MessageEvent).data;
+			try {
+				const parsed = JSON.parse(data);
+				if (parsed && typeof parsed.messageId === 'string') {
+					accumulatedContent = '';
+					accumulatedReasoning = '';
+					callbacks.onAssistantMessageCreated?.(parsed.messageId, parsed.parentId);
+				}
+			} catch { /* ignore */ }
+		});
+
+		// Backend agentic loop: permission requested
+		eventSource.addEventListener('permission_request', (event) => {
+			const data = (event as MessageEvent).data;
+			try {
+				const parsed = JSON.parse(data);
+				if (parsed && typeof parsed.requestId === 'string' && typeof parsed.toolName === 'string') {
+					callbacks.onPermissionRequest?.(parsed.requestId, parsed.toolName, parsed.serverLabel || '');
+				}
+			} catch { /* ignore */ }
+		});
+
 		eventSource.onerror = () => {
 			if (combinedSignal.aborted) {
 				eventSource?.close();
@@ -333,7 +460,7 @@ export function reconnectBackgroundChat(
 						pendingToolCalls[idx].function.name = tc.function.name;
 					}
 				}
-				callbacks.onToolCallChunk?.(delta.tool_calls);
+				callbacks.onToolCallChunk?.(Object.values(pendingToolCalls));
 			}
 
 			if (parsed.timings) {

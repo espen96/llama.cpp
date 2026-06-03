@@ -101,6 +101,83 @@ export function createSystemMessage(convId: string, systemPrompt: string, parent
     };
 }
 
+/**
+ * Create a tool result message (role: "tool") in the database.
+ * Called by the backend agentic loop after executing a tool call.
+ *
+ * @param convId - Conversation ID
+ * @param toolCallId - The tool_call_id that this result answers
+ * @param content - Text content of the result
+ * @param parentId - ID of the assistant message that made the tool call
+ * @returns The new message object
+ */
+export function createToolResultMessage(
+    convId: string,
+    toolCallId: string,
+    content: string,
+    parentId: string
+): any {
+    const id = crypto.randomUUID();
+    const timestamp = Date.now();
+
+    const transaction = db.transaction(() => {
+        db.prepare(`
+            INSERT INTO messages (id, conv_id, type, timestamp, role, content, parent, children, tool_call_id, generation_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(id, convId, 'tool', timestamp, 'tool', content, parentId, '[]', toolCallId, 'done');
+
+        // Add this message as a child of the parent (assistant) message
+        const parent = db.prepare('SELECT children FROM messages WHERE id = ?').get(parentId) as any;
+        if (parent) {
+            const children = JSON.parse(parent.children || '[]');
+            children.push(id);
+            db.prepare('UPDATE messages SET children = ? WHERE id = ?').run(JSON.stringify(children), parentId);
+        }
+
+        updateConversation(convId, { currNode: id });
+    });
+
+    transaction();
+
+    return { id, convId, type: 'tool', timestamp, role: 'tool', content, parent: parentId, children: [], toolCallId };
+}
+
+/**
+ * Create an assistant message placeholder for a subsequent agentic turn.
+ * Used by the backend agentic loop when starting a new LLM turn.
+ *
+ * @param convId - Conversation ID
+ * @param parentId - ID of the last tool result message (parent in the tree)
+ * @param id - Pre-generated UUID to use for this message
+ * @returns The new message row id
+ */
+export function createAssistantMessagePlaceholder(
+    convId: string,
+    parentId: string,
+    id: string
+): string {
+    const timestamp = Date.now();
+
+    const transaction = db.transaction(() => {
+        db.prepare(`
+            INSERT INTO messages (id, conv_id, type, timestamp, role, content, parent, children, generation_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(id, convId, 'normal', timestamp, 'assistant', '', parentId, '[]', 'streaming');
+
+        const parent = db.prepare('SELECT children FROM messages WHERE id = ?').get(parentId) as any;
+        if (parent) {
+            const children = JSON.parse(parent.children || '[]');
+            children.push(id);
+            db.prepare('UPDATE messages SET children = ? WHERE id = ?').run(JSON.stringify(children), parentId);
+        }
+
+        updateConversation(convId, { currNode: id });
+    });
+
+    transaction();
+    return id;
+}
+
 export function deleteMessage(messageId: string): void {
     const transaction = db.transaction(() => {
         const message = db.prepare('SELECT parent FROM messages WHERE id = ?').get(messageId) as any;

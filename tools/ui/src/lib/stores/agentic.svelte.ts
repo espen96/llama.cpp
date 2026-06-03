@@ -299,7 +299,7 @@ class AgenticStore {
 		return JSON.parse(trimmed) as Record<string, unknown>;
 	}
 
-	private async requestPermission(
+	async requestPermission(
 		conversationId: string,
 		toolName: string,
 		serverLabel: string,
@@ -383,6 +383,9 @@ class AgenticStore {
 	}
 
 	async runAgenticFlow(params: AgenticFlowParams): Promise<AgenticFlowResult> {
+		// Bypass frontend loop runner in favor of background agentic loop
+		return { handled: false };
+
 		const { conversationId, messages, options = {}, callbacks, signal, perChatOverrides, assistantMessageId } = params;
 
 		// Clear any pending permissions/continue requests for this conversation when starting a new flow
@@ -456,7 +459,7 @@ class AgenticStore {
 			});
 			return { handled: true };
 		} catch (error) {
-			const normalizedError = error instanceof Error ? error : new Error(String(error));
+			const normalizedError = (error instanceof Error ? error : new Error(String(error))) as Error;
 			this.updateSession(conversationId, { lastError: normalizedError });
 			callbacks.onError?.(normalizedError);
 			return { handled: true, error: normalizedError };
@@ -995,6 +998,15 @@ export function agenticPendingPermissionRequest(conversationId: string) {
 
 export function agenticResolvePermission(conversationId: string, decision: ToolPermissionDecision) {
 	agenticStore.resolvePermission(conversationId, decision);
+}
+
+export function agenticRequestPermission(
+	conversationId: string,
+	toolName: string,
+	serverLabel: string,
+	signal?: AbortSignal
+) {
+	return agenticStore.requestPermission(conversationId, toolName, serverLabel, signal);
 }
 
 export function agenticPendingContinueRequest(conversationId: string) {

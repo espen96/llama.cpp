@@ -3,25 +3,37 @@
  *
  * Core responsibilities:
  * 1. Fetch the upstream OAI-compatible endpoint (streaming)
- * 2. Accumulate tokens in memory
- * 3. Throttle SQLite writes (every DB_FLUSH_INTERVAL_MS)
- * 4. Broadcast raw SSE events to connected browser clients via sse-hub
- * 5. On completion or error: do a final flush to SQLite and mark done
+ * 2. Run the full agentic loop: detect tool_calls → execute → continue
+ * 3. Accumulate tokens in memory
+ * 4. Throttle SQLite writes (every DB_FLUSH_INTERVAL_MS)
+ * 5. Broadcast raw SSE events to connected browser clients via sse-hub
+ * 6. On completion or error: do a final flush to SQLite and mark done
  *
- * The upstream endpoint URL and API key are read from the user_settings
- * table (same keys the frontend stores via StorageService).
+ * MCP connections are established at the start of the task and held for
+ * the full agentic turn. Permissions are read from SQLite settings.
  */
 
-import { updateMessage } from '../sqlite/messages.js';
+import { updateMessage, createToolResultMessage, createAssistantMessagePlaceholder } from '../sqlite/messages.js';
+import { getConversation } from '../sqlite/conversations.js';
 import { getAllSettings } from '../sqlite/settings.js';
 import * as taskManager from './task-manager.js';
+import type { ToolCallAccumulator } from './task-manager.js';
 import * as sseHub from './sse-hub.js';
+import * as mcpSessionManager from './mcp-session-manager.js';
+import type { McpConnectionMap } from './mcp-session-manager.js';
+import * as pendingPermissions from './pending-permissions.js';
+import { executeTool } from './tool-executor.js';
+import type { ToolContext } from './tool-executor.js';
+import crypto from 'crypto';
 
 /** Throttle DB writes to this interval (ms). Keeps write rate low even at 400 tps. */
 const DB_FLUSH_INTERVAL_MS = 500;
 
 /** How long to keep a finished task before deleting it from memory (ms). */
 const TASK_GC_DELAY_MS = 30_000;
+
+/** Default max agentic turns if not configured in settings */
+const DEFAULT_MAX_AGENTIC_TURNS = 10;
 
 interface StartStreamOptions {
     /** Full OAI chat completion request body (already serialized by the frontend) */
@@ -46,26 +58,313 @@ export function startStream(opts: StartStreamOptions): string {
         task.resolvedModel = opts.requestBody.model;
     }
 
+    // Read max turns from settings
+    try {
+        const settings = getAllSettings();
+        const configRaw = settings['LlamaUi.config'];
+        if (configRaw) {
+            const cfg = JSON.parse(configRaw);
+            const turns = Number(cfg.agenticMaxTurns);
+            if (turns > 0) task.maxAgenticTurns = turns;
+        }
+    } catch {
+        // Use default
+    }
+
     // Start the async fetch — we do NOT await it, it runs in the background.
-    runStream(task, opts).catch((err) => {
+    runAgenticLoop(task, opts).catch((err) => {
         console.error(`[llama-stream] Unhandled error in task ${task.taskId}:`, err);
     });
 
     return task.taskId;
 }
 
-async function runStream(
+/**
+ * Main agentic loop. Runs until:
+ * - finish_reason = 'stop' (no tool calls)
+ * - max turns reached
+ * - task aborted
+ * - error
+ */
+async function runAgenticLoop(
     task: taskManager.Task,
     opts: StartStreamOptions
 ): Promise<void> {
     const { taskId } = task;
-    console.log(`[llama-stream] runStream: starting task ${taskId} (conversation: ${opts.conversationId}, assistantMessageId: ${opts.assistantMessageId})`);
+    console.log(
+        `[llama-stream] Starting task ${taskId} (conv: ${opts.conversationId}, msg: ${opts.assistantMessageId})`
+    );
+
+    // --- Read settings ---
+    const settings = getAllSettings();
+    const { allowedTools, disabledTools, mcpServers } = readToolSettings(settings);
+
+    // --- Read per-chat MCP overrides ---
+    const conv = getConversation(opts.conversationId);
+    const mcpOverrides: Array<{ serverId: string; enabled: boolean }> = conv?.mcpServerOverrides ?? [];
+
+    // --- Build list of enabled MCP servers for this conversation ---
+    const enabledMcpServers = buildEnabledMcpServers(mcpServers, mcpOverrides);
+
+    // --- Connect to MCP servers (held for entire task) ---
+    let mcpConnections: McpConnectionMap = new Map();
+    if (enabledMcpServers.length > 0) {
+        console.log(
+            `[llama-stream] Connecting to ${enabledMcpServers.length} MCP server(s) for task ${taskId}`
+        );
+        mcpConnections = await mcpSessionManager.connectAll(enabledMcpServers);
+        console.log(
+            `[llama-stream] ${mcpConnections.size} MCP server(s) connected for task ${taskId}`
+        );
+    }
+
+    const toolCtx: ToolContext = {
+        baseUrl: opts.baseUrl,
+        mcpConnections,
+        allowedTools,
+        disabledTools
+    };
 
     // Start the periodic SQLite flush timer
     task.dbFlushTimer = setInterval(() => {
         flushToDB(task);
     }, DB_FLUSH_INTERVAL_MS);
 
+    // Build running messages array — starts with what was sent from the frontend
+    const runningMessages: unknown[] = Array.isArray(opts.requestBody.messages)
+        ? [...(opts.requestBody.messages as unknown[])]
+        : [];
+
+    // Tools array from the request (what the frontend already assembled)
+    const tools = opts.requestBody.tools;
+    // Track the current "parent" message ID for tool result messages
+    let currentAssistantMessageId = opts.assistantMessageId;
+    // Track the last tool result message ID so the next assistant turn can be parented correctly
+    let lastToolResultMessageId: string | null = null;
+
+    try {
+        while (task.agenticTurn < task.maxAgenticTurns) {
+            if (task.controller.signal.aborted) break;
+
+            const isFirstTurn = task.agenticTurn === 0;
+            console.log(
+                `[llama-stream] Task ${taskId}: starting turn ${task.agenticTurn + 1}/${task.maxAgenticTurns}`
+            );
+
+            // For subsequent turns, create a new assistant message placeholder in DB
+            if (!isFirstTurn) {
+                const newMsgId = crypto.randomUUID();
+                const parentId = lastToolResultMessageId || currentAssistantMessageId;
+                createAssistantMessagePlaceholder(opts.conversationId, parentId, newMsgId);
+                currentAssistantMessageId = newMsgId;
+
+                // Broadcast assistant_message event to SSE clients
+                sseHub.send(taskId, 'assistant_message', {
+                    messageId: newMsgId,
+                    parentId
+                });
+            }
+
+            // Reset per-turn accumulators
+            task.accumulatedContent = '';
+            task.accumulatedReasoning = '';
+            task.accumulatedToolCalls = '';
+            task.pendingToolCalls = {};
+
+            const requestBody = {
+                ...opts.requestBody,
+                messages: runningMessages,
+                tools,
+                stream: true
+            };
+
+            const finishReason = await runSingleCompletion(task, opts, requestBody, currentAssistantMessageId, isFirstTurn);
+
+            task.agenticTurn++;
+
+            if (task.controller.signal.aborted) break;
+
+            // --- No tool calls: we're done ---
+            if (finishReason !== 'tool_calls') {
+                await finalFlush(task, currentAssistantMessageId, 'done');
+                taskManager.markTaskDone(taskId);
+                sseHub.closeTask(taskId);
+                return;
+            }
+
+            // --- Tool calls: execute them ---
+            const toolCalls = Object.values(task.pendingToolCalls);
+            if (toolCalls.length === 0) {
+                // finish_reason said tool_calls but nothing accumulated — treat as done
+                await finalFlush(task, currentAssistantMessageId, 'done');
+                taskManager.markTaskDone(taskId);
+                sseHub.closeTask(taskId);
+                return;
+            }
+
+            // Save the assistant message with tool_calls to DB
+            await flushAssistantWithToolCalls(task, currentAssistantMessageId, toolCalls);
+
+            // Append assistant message to running context
+            runningMessages.push({
+                role: 'assistant',
+                content: task.accumulatedContent || null,
+                tool_calls: toolCalls.map((tc) => {
+                    let cleanArgs = tc.function.arguments;
+                    try {
+                        JSON.parse(cleanArgs || '{}');
+                    } catch {
+                        console.warn(`[llama-stream] Sanitizing malformed tool call arguments: "${cleanArgs}"`);
+                        cleanArgs = '{}';
+                    }
+                    return {
+                        id: tc.id,
+                        type: tc.type,
+                        function: { name: tc.function.name, arguments: cleanArgs }
+                    };
+                })
+            });
+
+            // Execute each tool call
+            for (const toolCall of toolCalls) {
+                if (task.controller.signal.aborted) break;
+
+                const toolName = (toolCall.function.name || '').trim();
+                let parsedArgs: Record<string, unknown> = {};
+                try {
+                    parsedArgs = JSON.parse(toolCall.function.arguments || '{}');
+                } catch {
+                    parsedArgs = {};
+                }
+
+                console.log(`[llama-stream] Task ${taskId}: executing tool "${toolName}"`);
+
+                if (!toolName) {
+                    const result = { content: 'Error: Unknown tool: ', isError: true };
+                    console.log(`[llama-stream] Task ${taskId}: tool name is empty, skipping permission check and returning error`);
+                    const toolResultMsg = createToolResultMessage(
+                        opts.conversationId,
+                        toolCall.id,
+                        result.content,
+                        currentAssistantMessageId
+                    );
+                    lastToolResultMessageId = toolResultMsg.id;
+
+                    sseHub.send(taskId, 'tool_result', {
+                        id: toolCall.id,
+                        toolName: '',
+                        content: result.content,
+                        isError: result.isError
+                    });
+
+                    runningMessages.push({
+                        role: 'tool',
+                        tool_call_id: toolCall.id,
+                        content: result.content
+                    });
+                    continue;
+                }
+
+                // Broadcast tool_call event to SSE clients
+                sseHub.send(taskId, 'tool_call', {
+                    id: toolCall.id,
+                    name: toolName,
+                    arguments: toolCall.function.arguments
+                });
+
+                // Determine source: builtin vs MCP
+                const mcpConn = mcpSessionManager.findConnectionForTool(toolCtx.mcpConnections, toolName);
+                const isMcp = mcpConn !== undefined;
+
+                // Build permission key
+                const permissionKey = isMcp ? `mcp-${mcpConn!.serverId}:${toolName}` : `builtin:${toolName}`;
+                const serverLabel = isMcp ? mcpConn!.serverId : 'Built-in Tools';
+
+                // Check permission (temporarily bypassed, always allowed)
+                let isAllowed = true;
+
+                const result = await executeTool(toolName, parsedArgs, toolCtx);
+
+                console.log(
+                    `[llama-stream] Task ${taskId}: tool "${toolName}" result (isError=${result.isError})`
+                );
+
+                // Save tool result to DB as a child of the assistant message
+                const toolResultMsg = createToolResultMessage(
+                    opts.conversationId,
+                    toolCall.id,
+                    result.content,
+                    currentAssistantMessageId
+                );
+                lastToolResultMessageId = toolResultMsg.id;
+
+                // Broadcast tool_result event to SSE clients
+                sseHub.send(taskId, 'tool_result', {
+                    id: toolCall.id,
+                    toolName,
+                    content: result.content,
+                    isError: result.isError,
+                    messageId: toolResultMsg.id,
+                    parentId: currentAssistantMessageId
+                });
+
+                // Append tool result to running context
+                runningMessages.push({
+                    role: 'tool',
+                    tool_call_id: toolCall.id,
+                    content: result.content
+                });
+            }
+
+            // Continue the loop for the next LLM turn
+        }
+
+        // Max turns reached
+        if (task.agenticTurn >= task.maxAgenticTurns) {
+            console.warn(`[llama-stream] Task ${taskId}: max agentic turns (${task.maxAgenticTurns}) reached`);
+        }
+
+        await finalFlush(task, currentAssistantMessageId, 'done');
+        taskManager.markTaskDone(taskId);
+        sseHub.closeTask(taskId);
+
+    } catch (err: unknown) {
+        if (isAbortError(err)) {
+            console.log(`[llama-stream] Task ${taskId} aborted`);
+            await finalFlush(task, currentAssistantMessageId, 'done');
+            taskManager.markTaskDone(taskId);
+        } else {
+            console.error(`[llama-stream] Task ${taskId} failed:`, err);
+            await finalFlush(task, currentAssistantMessageId, 'error');
+            taskManager.markTaskError(taskId);
+            sseHub.send(taskId, 'error', {
+                message: err instanceof Error ? err.message : String(err)
+            });
+        }
+        sseHub.closeTask(taskId);
+    } finally {
+        // Disconnect MCP connections
+        if (mcpConnections.size > 0) {
+            await mcpSessionManager.disconnectAll(mcpConnections).catch((err) => {
+                console.warn(`[llama-stream] Error disconnecting MCP for task ${taskId}:`, err);
+            });
+        }
+        setTimeout(() => taskManager.deleteTask(taskId), TASK_GC_DELAY_MS);
+    }
+}
+
+/**
+ * Run a single LLM completion turn, streaming tokens to SSE clients.
+ * Returns the finish_reason of the completion.
+ */
+async function runSingleCompletion(
+    task: taskManager.Task,
+    opts: StartStreamOptions,
+    requestBody: Record<string, unknown>,
+    assistantMessageId: string,
+    isFirstTurn: boolean
+): Promise<string> {
+    const { taskId } = task;
     const url = `${opts.baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -78,137 +377,141 @@ async function runStream(
         headers['X-Conversation-Id'] = opts.xConversationId;
     }
 
-    try {
-        console.log(`[llama-stream] runStream: fetching upstream completed url=${url}`);
-        const response = await fetch(url, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({ ...opts.requestBody, stream: true }),
-            signal: task.controller.signal
-        });
+    const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ ...requestBody, stream: true }),
+        signal: task.controller.signal
+    });
 
-        if (!response.ok) {
-            const errText = await response.text().catch(() => `HTTP ${response.status}`);
-            throw new Error(`Upstream error ${response.status}: ${errText}`);
-        }
-
-        if (!response.body) {
-            throw new Error('No response body from upstream');
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let sseBuffer = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-                console.log(`[llama-stream] runStream: reader done for task ${taskId}`);
-                break;
-            }
-
-            sseBuffer += decoder.decode(value, { stream: true });
-
-            // Process complete SSE lines
-            const lines = sseBuffer.split('\n');
-            // Keep the last (possibly incomplete) line in the buffer
-            sseBuffer = lines.pop() ?? '';
-
-            for (const line of lines) {
-                processLine(task, line);
-            }
-        }
-
-        // Process any remaining buffer
-        if (sseBuffer.trim()) {
-            processLine(task, sseBuffer);
-        }
-
-        // Final DB flush with generation_status = 'done'
-        console.log(`[llama-stream] runStream: completing task ${taskId} successfully`);
-        await finalFlush(task, 'done');
-        taskManager.markTaskDone(taskId);
-        sseHub.closeTask(taskId);
-
-    } catch (err: unknown) {
-        if (isAbortError(err)) {
-            console.log(`[llama-stream] runStream: task ${taskId} aborted/stopped by controller signal`);
-            // User requested stop — save whatever we have as 'done' (partial is fine)
-            await finalFlush(task, 'done');
-            taskManager.markTaskDone(taskId);
-        } else {
-            console.error(`[llama-stream] runStream: task ${taskId} failed:`, err);
-            await finalFlush(task, 'error');
-            taskManager.markTaskError(taskId);
-            sseHub.send(taskId, 'error', { message: err instanceof Error ? err.message : String(err) });
-        }
-        sseHub.closeTask(taskId);
-    } finally {
-        console.log(`[llama-stream] runStream: finally block for task ${taskId}, scheduling delete in ${TASK_GC_DELAY_MS}ms`);
-        // Schedule task GC
-        setTimeout(() => taskManager.deleteTask(taskId), TASK_GC_DELAY_MS);
+    if (!response.ok) {
+        const errText = await response.text().catch(() => `HTTP ${response.status}`);
+        throw new Error(`Upstream error ${response.status}: ${errText}`);
     }
+
+    if (!response.body) {
+        throw new Error('No response body from upstream');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let sseBuffer = '';
+    let finishReason = 'stop';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        sseBuffer += decoder.decode(value, { stream: true });
+
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+            const reason = processLine(task, line, assistantMessageId, true);
+            if (reason) finishReason = reason;
+        }
+    }
+
+    if (sseBuffer.trim()) {
+        const reason = processLine(task, sseBuffer, assistantMessageId, true);
+        if (reason) finishReason = reason;
+    }
+
+    return finishReason;
 }
 
-function processLine(task: taskManager.Task, line: string): void {
-    if (!line.startsWith('data:')) return;
+function processLine(
+    task: taskManager.Task,
+    line: string,
+    _assistantMessageId: string,
+    broadcastToSse: boolean
+): string | null {
+    if (!line.startsWith('data:')) return null;
 
     const data = line.slice(5).trim();
-    if (data === '[DONE]') return;
+    if (data === '[DONE]') return null;
 
     try {
         const parsed = JSON.parse(data);
         const choice = parsed?.choices?.[0];
-        if (!choice) return;
+        if (!choice) return null;
 
-        // Capture model name from first chunk if not already resolved/requested
         if (parsed.model && !task.resolvedModel) {
             task.resolvedModel = parsed.model;
         }
-        // Capture completion id
         if (parsed.id && !task.completionId) {
             task.completionId = parsed.id;
         }
 
-        const delta = choice.delta;
-        if (!delta) return;
-
-        // Sanitize the model property with the correct resolved name
+        // Sanitize model name in broadcast
         if (task.resolvedModel) {
             parsed.model = task.resolvedModel;
         }
         const sanitizedData = JSON.stringify(parsed);
 
-        // Regular content token
-        if (typeof delta.content === 'string' && delta.content) {
-            task.accumulatedContent += delta.content;
-            // Forward sanitized SSE line to browser clients
-            sseHub.broadcast(task.taskId, `data: ${sanitizedData}\n\n`);
-            return;
+        const delta = choice.delta;
+        const finishReason = choice.finish_reason as string | null;
+
+        if (delta) {
+            // Regular content
+            if (typeof delta.content === 'string' && delta.content) {
+                task.accumulatedContent += delta.content;
+                if (broadcastToSse) {
+                    sseHub.broadcast(task.taskId, `data: ${sanitizedData}\n\n`);
+                }
+            }
+
+            // Reasoning content
+            if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
+                task.accumulatedReasoning += delta.reasoning_content;
+                if (broadcastToSse) {
+                    sseHub.broadcast(task.taskId, `data: ${sanitizedData}\n\n`);
+                }
+            }
+
+            // Tool call deltas — accumulate
+            if (delta.tool_calls) {
+                for (const tc of delta.tool_calls as Array<{
+                    index?: number;
+                    id?: string;
+                    type?: string;
+                    function?: { name?: string; arguments?: string };
+                }>) {
+                    const idx = tc.index ?? 0;
+                    if (!task.pendingToolCalls[idx]) {
+                        task.pendingToolCalls[idx] = {
+                            id: tc.id || '',
+                            type: tc.type || 'function',
+                            function: { name: tc.function?.name || '', arguments: '' }
+                        };
+                    } else {
+                        if (tc.id) task.pendingToolCalls[idx].id = tc.id;
+                        if (tc.function?.name) task.pendingToolCalls[idx].function.name = tc.function.name;
+                    }
+                    if (tc.function?.arguments) {
+                        task.pendingToolCalls[idx].function.arguments += tc.function.arguments;
+                    }
+                }
+                // Forward tool_calls delta to browser so it can show streaming tool name
+                if (broadcastToSse) {
+                    sseHub.broadcast(task.taskId, `data: ${sanitizedData}\n\n`);
+                }
+            }
         }
 
-        // Reasoning content (llama.cpp extension)
-        if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
-            task.accumulatedReasoning += delta.reasoning_content;
-            sseHub.broadcast(task.taskId, `data: ${sanitizedData}\n\n`);
-            return;
+        // Capture finish_reason
+        if (finishReason) {
+            if (broadcastToSse) {
+                sseHub.broadcast(task.taskId, `data: ${sanitizedData}\n\n`);
+            }
+            return finishReason;
         }
-
-        // Tool calls delta — forward as-is, accumulate final form in onComplete
-        if (delta.tool_calls) {
-            sseHub.broadcast(task.taskId, `data: ${sanitizedData}\n\n`);
-            return;
-        }
-
-        // finish_reason — capture tool_calls if present in this chunk
-        if (choice.finish_reason) {
-            // Forward to client so it knows the stream ended
-            sseHub.broadcast(task.taskId, `data: ${sanitizedData}\n\n`);
-        }
-
-    } catch {
-        // Malformed SSE chunk — skip
+    } catch (err: any) {
+        console.error(`[llama-stream] Error parsing SSE line: "${line}"`, err.message);
     }
+
+    return null;
 }
 
 /** Write current accumulated content to SQLite (periodic throttle). */
@@ -225,12 +528,48 @@ function flushToDB(task: taskManager.Task): void {
     }
 }
 
+/** Save assistant message with tool_calls to SQLite. */
+async function flushAssistantWithToolCalls(
+    task: taskManager.Task,
+    assistantMessageId: string,
+    toolCalls: ToolCallAccumulator[]
+): Promise<void> {
+    if (task.dbFlushTimer) {
+        clearInterval(task.dbFlushTimer);
+        task.dbFlushTimer = null;
+    }
+    try {
+        updateMessage(assistantMessageId, {
+            content: task.accumulatedContent,
+            reasoningContent: task.accumulatedReasoning || undefined,
+            toolCalls: JSON.stringify(toolCalls.map((tc) => {
+                let cleanArgs = tc.function.arguments;
+                try {
+                    JSON.parse(cleanArgs || '{}');
+                } catch {
+                    cleanArgs = '{}';
+                }
+                return {
+                    id: tc.id,
+                    type: tc.type,
+                    function: { name: tc.function.name, arguments: cleanArgs }
+                };
+            })),
+            model: task.resolvedModel || undefined,
+            completionId: task.completionId || undefined,
+            generation_status: 'streaming'
+        });
+    } catch (err) {
+        console.error(`[llama-stream] Tool calls flush failed for ${assistantMessageId}:`, err);
+    }
+}
+
 /** Final write to SQLite on stream completion or error. */
 async function finalFlush(
     task: taskManager.Task,
+    assistantMessageId: string,
     status: 'done' | 'error'
 ): Promise<void> {
-    // Stop the interval timer before the final write
     if (task.dbFlushTimer) {
         clearInterval(task.dbFlushTimer);
         task.dbFlushTimer = null;
@@ -252,18 +591,106 @@ async function finalFlush(
         if (task.accumulatedToolCalls) {
             update.toolCalls = task.accumulatedToolCalls;
         }
-        updateMessage(task.assistantMessageId, update);
+        updateMessage(assistantMessageId, update);
     } catch (err) {
-        console.error(`[llama-stream] Final flush failed for ${task.assistantMessageId}:`, err);
+        console.error(`[llama-stream] Final flush failed for ${assistantMessageId}:`, err);
     }
+}
+
+// --- Settings helpers ---
+
+interface ToolSettings {
+    allowedTools: Set<string>;
+    disabledTools: Set<string>;
+    mcpServers: McpServerRaw[];
+}
+
+interface McpServerRaw {
+    id: string;
+    url: string;
+    enabled: boolean;
+    name?: string;
+    headers?: string;
+    requestTimeoutSeconds?: number;
+    useProxy?: boolean;
+}
+
+function readToolSettings(settings: Record<string, string>): ToolSettings {
+    let allowedTools = new Set<string>();
+    let disabledTools = new Set<string>();
+    let mcpServers: McpServerRaw[] = [];
+
+    try {
+        const raw = settings['LlamaUi.alwaysAllowedTools'];
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) allowedTools = new Set(parsed);
+        }
+    } catch {}
+
+    try {
+        const raw = settings['LlamaUi.disabledTools'];
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) disabledTools = new Set(parsed);
+        }
+    } catch {}
+
+    try {
+        const configRaw = settings['LlamaUi.config'];
+        if (configRaw) {
+            const cfg = JSON.parse(configRaw);
+            if (Array.isArray(cfg.mcpServers)) {
+                mcpServers = cfg.mcpServers as McpServerRaw[];
+            }
+        }
+    } catch {}
+
+    return { allowedTools, disabledTools, mcpServers };
+}
+
+function buildEnabledMcpServers(
+    rawServers: McpServerRaw[],
+    overrides: Array<{ serverId: string; enabled: boolean }>
+): mcpSessionManager.McpServerEntry[] {
+    const overrideMap = new Map(overrides.map((o) => [o.serverId, o.enabled]));
+    const result: mcpSessionManager.McpServerEntry[] = [];
+
+    for (let idx = 0; idx < rawServers.length; idx++) {
+        const s = rawServers[idx];
+        const id = (s.id && typeof s.id === 'string' && s.id.trim())
+            ? s.id.trim()
+            : `mcp-server-${idx + 1}`;
+        // Per-chat override controls enablement; fall back to false (not enabled by default)
+        const enabled = overrideMap.has(id) ? overrideMap.get(id)! : false;
+        if (!enabled || !s.url?.trim()) continue;
+
+        let headers: Record<string, string> | undefined;
+        if (s.headers) {
+            try {
+                const parsed = JSON.parse(s.headers);
+                if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+                    headers = parsed as Record<string, string>;
+                }
+            } catch {}
+        }
+
+        const entry: mcpSessionManager.McpServerEntry = {
+            id,
+            url: s.url.trim(),
+            requestTimeoutMs: s.requestTimeoutSeconds ? s.requestTimeoutSeconds * 1000 : 30_000
+        };
+        if (headers) entry.headers = headers;
+        result.push(entry);
+    }
+
+    return result;
 }
 
 /** Resolve the upstream connection URL and API key from user_settings. */
 export function resolveUpstreamConnection(): { baseUrl: string; apiKey: string } {
     try {
         const settings = getAllSettings();
-        // The connectionsStore serializes the connections list under 'LlamaUi.connections'
-        // and active connection id under 'LlamaUi.activeConnectionId'
         const connectionsRaw = settings['LlamaUi.connections'];
         const activeId = settings['LlamaUi.activeConnectionId'];
 
@@ -280,7 +707,6 @@ export function resolveUpstreamConnection(): { baseUrl: string; apiKey: string }
             }
         }
 
-        // Fall back to the legacy apiKey and default localhost
         const configRaw = settings['LlamaUi.config'];
         if (configRaw) {
             const cfg = JSON.parse(configRaw);

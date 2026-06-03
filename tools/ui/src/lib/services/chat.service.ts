@@ -195,9 +195,25 @@ export class ChatService {
 				const mapped: Record<string, unknown> = {
 					role: msg.role,
 					content: msg.content,
-					tool_calls: msg.tool_calls,
 					tool_call_id: msg.tool_call_id
 				};
+				if (msg.tool_calls) {
+					mapped.tool_calls = msg.tool_calls.map((tc) => {
+						let cleanArgs = tc.function?.arguments;
+						try {
+							JSON.parse(cleanArgs || '{}');
+						} catch {
+							cleanArgs = '{}';
+						}
+						return {
+							...tc,
+							function: {
+								...tc.function,
+								arguments: cleanArgs
+							}
+						};
+					});
+				}
 				if (!excludeReasoningFromContext && msg.reasoning_content) {
 					mapped.reasoning_content = msg.reasoning_content;
 				}

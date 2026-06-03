@@ -13,6 +13,12 @@ import crypto from 'crypto';
 
 export type TaskStatus = 'streaming' | 'done' | 'error' | 'aborted';
 
+export interface ToolCallAccumulator {
+    id: string;
+    type: string;
+    function: { name: string; arguments: string };
+}
+
 export interface Task {
     taskId: string;
     conversationId: string;
@@ -30,6 +36,12 @@ export interface Task {
     createdAt: number;
     /** Timer handle for periodic DB writes */
     dbFlushTimer: ReturnType<typeof setInterval> | null;
+    /** In-flight tool call deltas during streaming, keyed by index */
+    pendingToolCalls: Record<number, ToolCallAccumulator>;
+    /** Current agentic turn number (0 = first LLM call) */
+    agenticTurn: number;
+    /** Maximum number of agentic turns before stopping */
+    maxAgenticTurns: number;
 }
 
 const tasks = new Map<string, Task>();
@@ -51,7 +63,10 @@ export function createTask(
         resolvedModel: null,
         completionId: null,
         createdAt: Date.now(),
-        dbFlushTimer: null
+        dbFlushTimer: null,
+        pendingToolCalls: {},
+        agenticTurn: 0,
+        maxAgenticTurns: 10
     };
     tasks.set(taskId, task);
     return task;
