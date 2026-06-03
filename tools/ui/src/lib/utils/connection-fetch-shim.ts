@@ -181,7 +181,8 @@ function buildMockResponse(data: unknown): Response {
  */
 async function tryFetch(url: string, init?: RequestInit): Promise<Response | null> {
 	try {
-		const res = await originalFetch(url, init);
+		const targetUrl = buildProxiedUrl(url).toString();
+		const res = await originalFetch(targetUrl, init);
 		if (res.ok) {
 			// Some proxies (like Open WebUI) are SPAs that return index.html (200 OK)
 			// for unknown endpoints instead of a 404 JSON response.
@@ -435,7 +436,7 @@ export function installConnectionFetchShim(): void {
 			}
 
 			case '/v1/chat/completions': {
-				const targetUrl = `${baseUrl}/v1/chat/completions`;
+				const targetUrl = buildProxiedUrl(`${baseUrl}/v1/chat/completions`).toString();
 				let modifiedInit = { ...init };
 				let requestedModel = '';
 
@@ -476,8 +477,17 @@ export function installConnectionFetchShim(): void {
 				return response;
 			}
 
-			case '/v1/chat/completions/control': {
+			case '/api/chat/control': {
 				// Try forwarding; if it fails, mock success
+
+				const upstreamRes = await tryFetch(`${baseUrl}${upstream}/v1/chat/completions/control`, {
+					...init,
+					headers: connectionHeaders
+				});
+				if (upstreamRes) return upstreamRes;
+
+
+
 				const targetUrl = `${baseUrl}/v1/chat/completions/control`;
 				const res = await tryFetch(targetUrl, { ...init, headers: connectionHeaders });
 				return res ?? buildMockResponse({ success: true });
@@ -530,7 +540,7 @@ export function installConnectionFetchShim(): void {
 							if (bodyObj.tool === 'execute_javascript') {
 								isLocalTool = true;
 							}
-						} catch (e) {}
+						} catch (e) { }
 					}
 
 					if (isLocalTool) {

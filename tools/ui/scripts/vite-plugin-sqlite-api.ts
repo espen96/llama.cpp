@@ -7,16 +7,14 @@ import * as settings from './sqlite/settings.js';
 import * as llamaStream from './background/llama-stream.js';
 import * as taskManager from './background/task-manager.js';
 import * as sseHub from './background/sse-hub.js';
-
 export function sqliteApiPlugin(): Plugin {
     return {
         name: 'vite-plugin-sqlite-api',
         configureServer(server) {
             const app = express();
             app.use(bodyParser.json({ limit: '50mb' }));
-
             // --- Conversations ---
-            
+
             app.get('/conversations', (req, res) => {
                 try {
                     const convs = conversations.getAllConversations();
@@ -25,7 +23,6 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             app.post('/conversations', (req, res) => {
                 try {
                     const conv = conversations.createConversation(req.body.name);
@@ -34,7 +31,6 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             app.get('/conversations/:id', (req, res) => {
                 try {
                     const conv = conversations.getConversation(req.params.id);
@@ -47,7 +43,6 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             app.patch('/conversations/:id', (req, res) => {
                 try {
                     conversations.updateConversation(req.params.id, req.body);
@@ -56,16 +51,25 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             app.delete('/conversations/:id', (req, res) => {
                 try {
-                    conversations.deleteConversation(req.params.id, { deleteWithForks: req.query.deleteWithForks === 'true' });
+                    const convId = req.params.id;
+                    const deleteWithForks = req.query.deleteWithForks === 'true';
+                    const idsToAbort = deleteWithForks
+                        ? conversations.getForkDescendants(convId)
+                        : [convId];
+                    for (const id of idsToAbort) {
+                        const task = taskManager.getActiveTaskForConversation(id);
+                        if (task) {
+                            taskManager.abortTask(task.taskId);
+                        }
+                    }
+                    conversations.deleteConversation(convId, { deleteWithForks });
                     res.json({ success: true });
                 } catch (e: any) {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             app.patch('/conversations/:id/node', (req, res) => {
                 try {
                     conversations.updateCurrentNode(req.params.id, req.body.nodeId);
@@ -74,7 +78,6 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             app.post('/conversations/:id/fork', (req, res) => {
                 try {
                     const conv = conversations.forkConversation(req.params.id, req.body.atMessageId, req.body.options);
@@ -83,7 +86,6 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             app.get('/conversations/:id/messages', (req, res) => {
                 try {
                     const msgs = messages.getConversationMessages(req.params.id);
@@ -92,9 +94,7 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             // --- Messages ---
-
             app.post('/messages/branch', (req, res) => {
                 try {
                     const msg = messages.createMessageBranch(req.body.message, req.body.parentId);
@@ -103,7 +103,6 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             app.post('/messages/root', (req, res) => {
                 try {
                     const id = messages.createRootMessage(req.body.convId);
@@ -112,7 +111,6 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             app.post('/messages/system', (req, res) => {
                 try {
                     const msg = messages.createSystemMessage(req.body.convId, req.body.systemPrompt, req.body.parentId);
@@ -121,7 +119,6 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             app.patch('/messages/:id', (req, res) => {
                 try {
                     messages.updateMessage(req.params.id, req.body);
@@ -130,7 +127,6 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             app.delete('/messages/:id', (req, res) => {
                 try {
                     messages.deleteMessage(req.params.id);
@@ -139,7 +135,6 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             app.delete('/conversations/:convId/messages/:msgId/cascading', (req, res) => {
                 try {
                     const deletedIds = messages.deleteMessageCascading(req.params.convId, req.params.msgId);
@@ -148,9 +143,7 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             // --- Import ---
-
             app.post('/import', (req, res) => {
                 try {
                     const result = conversations.importConversations(req.body.data);
@@ -159,11 +152,8 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             // --- Settings ---
-
             // --- Background Chat Generation ---
-
             /**
              * POST /api/chat
              * Start a background generation task.
@@ -173,18 +163,15 @@ export function sqliteApiPlugin(): Plugin {
             app.post('/chat', async (req, res) => {
                 try {
                     const { conversationId, messages: msgs, options = {}, connectionOverride } = req.body;
-
                     if (!conversationId || !msgs) {
                         res.status(400).json({ error: 'conversationId and messages are required' });
                         return;
                     }
-
                     const conv = conversations.getConversation(conversationId);
                     if (!conv) {
                         res.status(404).json({ error: 'Conversation not found' });
                         return;
                     }
-
                     // The frontend has already created the user message and assistant placeholder
                     // via /api/messages/branch. We just need the assistantMessageId from the body.
                     const { assistantMessageId } = req.body;
@@ -192,19 +179,15 @@ export function sqliteApiPlugin(): Plugin {
                         res.status(400).json({ error: 'assistantMessageId is required' });
                         return;
                     }
-
                     // Resolve upstream connection
                     const connection = connectionOverride || llamaStream.resolveUpstreamConnection();
-
                     // Build the OAI request body from what the frontend sent
                     const requestBody = {
                         messages: msgs,
                         ...options
                     };
-
                     // Set generation_status to 'streaming' on the placeholder message
                     messages.updateMessage(assistantMessageId, { generation_status: 'streaming' });
-
                     const taskId = llamaStream.startStream({
                         requestBody,
                         baseUrl: connection.baseUrl,
@@ -213,13 +196,11 @@ export function sqliteApiPlugin(): Plugin {
                         assistantMessageId,
                         xConversationId: conversationId
                     });
-
                     res.json({ taskId, assistantMessageId });
                 } catch (e: any) {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             /**
              * GET /api/chat/:taskId/stream
              * SSE endpoint — browser subscribes here to get live tokens.
@@ -227,12 +208,10 @@ export function sqliteApiPlugin(): Plugin {
             app.get('/chat/:taskId/stream', (req, res) => {
                 const { taskId } = req.params;
                 const task = taskManager.getTask(taskId);
-
                 if (!task) {
                     res.status(404).json({ error: 'Task not found' });
                     return;
                 }
-
                 // If task already finished, let the client know immediately
                 if (task.status !== 'streaming') {
                     res.writeHead(200, {
@@ -244,14 +223,11 @@ export function sqliteApiPlugin(): Plugin {
                     res.end();
                     return;
                 }
-
                 const cleanup = sseHub.addClient(taskId, res);
-
                 req.on('close', () => {
                     cleanup();
                 });
             });
-
             /**
              * GET /api/chat/active
              * List all currently streaming tasks (for reconnect on page reload).
@@ -274,7 +250,6 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             /**
              * DELETE /api/chat/:taskId
              * Abort a running generation task.
@@ -291,9 +266,7 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             // --- Settings ---
-
             app.get('/settings', (req, res) => {
                 try {
                     const data = settings.getAllSettings();
@@ -302,7 +275,6 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             app.patch('/settings', (req, res) => {
                 try {
                     settings.updateSettings(req.body.updates);
@@ -311,7 +283,6 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             app.delete('/settings/:key', (req, res) => {
                 try {
                     settings.deleteSetting(req.params.key);
@@ -320,7 +291,6 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
-
             // Mount express app under /api
             server.middlewares.use('/api', app);
         }

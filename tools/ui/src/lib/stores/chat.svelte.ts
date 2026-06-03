@@ -14,7 +14,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { DatabaseService } from '$lib/services/database.service';
 import { ChatService } from '$lib/services/chat.service';
-import { startBackgroundChat, reconnectBackgroundChat, getActiveTasks } from '$lib/services/chat-api.service';
+import { startBackgroundChat, reconnectBackgroundChat, getActiveTasks, abortTask } from '$lib/services/chat-api.service';
 import { conversationsStore } from '$lib/stores/conversations.svelte';
 import { config } from '$lib/stores/settings.svelte';
 import { agenticStore } from '$lib/stores/agentic.svelte';
@@ -69,6 +69,7 @@ class ChatStore {
 	chatLoadingStates = new SvelteMap<string, boolean>();
 	chatReasoningStates = new SvelteMap<string, boolean>();
 	chatStreamingStates = new SvelteMap<string, { response: string; messageId: string }>();
+	private chatActiveTaskIds = new SvelteMap<string, string>();
 	private abortControllers = new SvelteMap<string, AbortController>();
 	private preEncodeAbortController: AbortController | null = null;
 	private processingStates = new SvelteMap<string, ApiProcessingState | null>();
@@ -270,10 +271,11 @@ class ChatStore {
 		const messageId = task.assistantMessageId;
 		let streamedContent = task.accumulatedContent || '';
 		let streamedReasoning = task.accumulatedReasoning || '';
-		
+
 		this.setChatLoading(convId, true);
 		this.setStreamingActive(true);
-		
+		this.chatActiveTaskIds.set(convId, task.taskId);
+
 		// Immediately populate the store/UI with the text generated so far
 		this.setChatStreaming(convId, streamedContent, messageId);
 		const idx = conversationsStore.findMessageIndex(messageId);
@@ -288,9 +290,9 @@ class ChatStore {
 		if (streamedReasoning) {
 			this.setChatReasoning(convId, true);
 		}
-		
+
 		const abortController = this.getOrCreateAbortController(convId);
-		
+
 		const handle = reconnectBackgroundChat(
 			task.taskId,
 			streamedContent,
@@ -315,6 +317,7 @@ class ChatStore {
 					this.setChatReasoning(convId, true);
 				},
 				onComplete: async (content: string, reasoningContent?: string) => {
+					this.chatActiveTaskIds.delete(convId);
 					const idx = conversationsStore.findMessageIndex(messageId);
 					if (idx !== -1) {
 						conversationsStore.updateMessageAtIndex(idx, {
@@ -329,6 +332,7 @@ class ChatStore {
 					this.setProcessingState(convId, null);
 				},
 				onError: (error: Error) => {
+					this.chatActiveTaskIds.delete(convId);
 					this.setStreamingActive(false);
 					this.setChatLoading(convId, false);
 					this.clearChatStreaming(convId);
@@ -1031,11 +1035,15 @@ class ChatStore {
 					)
 				},
 				{
+					onTaskId: (taskId: string) => {
+						this.chatActiveTaskIds.set(convId, taskId);
+					},
 					onChunk: streamCallbacks.onChunk,
 					onReasoningChunk: streamCallbacks.onReasoningChunk,
 					onModel: streamCallbacks.onModel,
 					onCompletionId: streamCallbacks.onCompletionId,
 					onComplete: async (content: string, reasoningContent?: string) => {
+						this.chatActiveTaskIds.delete(convId);
 						// The backend has already written to SQLite; we just update the UI
 						const idx = conversationsStore.findMessageIndex(currentMessageId);
 						const uiUpdate: Partial<DatabaseMessage> = {
@@ -1058,6 +1066,7 @@ class ChatStore {
 						resolve();
 					},
 					onError: async (error: Error) => {
+						this.chatActiveTaskIds.delete(convId);
 						await streamCallbacks.onError?.(error);
 						resolve();
 					}
@@ -1082,6 +1091,13 @@ class ChatStore {
 		await this.stopGenerationForChat(activeConv.id);
 	}
 	async stopGenerationForChat(convId: string): Promise<void> {
+		const taskId = this.chatActiveTaskIds.get(convId);
+		if (taskId) {
+			abortTask(taskId).catch((err) => {
+				console.error(`Failed to abort task ${taskId} on backend:`, err);
+			});
+			this.chatActiveTaskIds.delete(convId);
+		}
 		await this.savePartialResponseIfNeeded(convId);
 		this.setStreamingActive(false);
 		this.abortRequest(convId);
@@ -1100,7 +1116,7 @@ class ChatStore {
 		const configValue = config();
 		const titlePromptTemplate =
 			typeof configValue.titleGenerationPrompt === 'string' &&
-			configValue.titleGenerationPrompt.trim()
+				configValue.titleGenerationPrompt.trim()
 				? configValue.titleGenerationPrompt
 				: TITLE_GENERATION.DEFAULT_PROMPT;
 

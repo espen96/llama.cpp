@@ -7,7 +7,7 @@ export const API_MODELS = {
 // chat completion routes, the control route drives realtime inference (e.g. end reasoning)
 export const API_CHAT = {
 	COMPLETIONS: './v1/chat/completions',
-	CONTROL: './v1/chat/completions/control'
+	CONTROL: '/api/chat/control'
 };
 
 // slot introspection, requires the --slots flag on the server

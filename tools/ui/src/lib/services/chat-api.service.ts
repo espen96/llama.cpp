@@ -28,6 +28,7 @@ export interface BackgroundChatResponse {
 }
 
 export interface ChatStreamCallbacksBackground {
+    onTaskId?: (taskId: string) => void;
     onChunk?: (chunk: string) => void;
     onReasoningChunk?: (chunk: string) => void;
     /** Called with the raw tool_calls delta array from each SSE chunk */
@@ -82,6 +83,8 @@ export function startBackgroundChat(
 
             const data: BackgroundChatResponse = await resp.json();
             taskId = data.taskId;
+
+            callbacks.onTaskId?.(taskId);
 
             if (combinedSignal.aborted) return;
 

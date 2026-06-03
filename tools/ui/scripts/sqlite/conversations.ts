@@ -1,20 +1,18 @@
 import { db, getDefaultUserId } from './db.js';
 import crypto from 'crypto';
-
 // Use any to match the types in the frontend until we share types
 export function createConversation(name: string): any {
     const id = crypto.randomUUID();
     const lastModified = Date.now();
     const userId = getDefaultUserId();
     const currNode = '';
-
     const stmt = db.prepare(`
         INSERT INTO conversations (id, name, last_modified, curr_node, user_id)
         VALUES (?, ?, ?, ?, ?)
     `);
-    
+
     stmt.run(id, name, lastModified, currNode, userId);
-    
+
     return {
         id,
         name,
@@ -22,22 +20,18 @@ export function createConversation(name: string): any {
         currNode,
     };
 }
-
 export function getAllConversations(): any[] {
     const rows = db.prepare('SELECT * FROM conversations ORDER BY last_modified DESC').all();
     return rows.map(mapConversationRow);
 }
-
 export function getConversation(id: string): any {
     const row = db.prepare('SELECT * FROM conversations WHERE id = ?').get(id);
     if (!row) return undefined;
     return mapConversationRow(row);
 }
-
 export function updateConversation(id: string, updates: any): void {
     const fields: string[] = [];
     const values: any[] = [];
-
     const allowedFields: Record<string, string> = {
         name: 'name',
         currNode: 'curr_node',
@@ -45,7 +39,6 @@ export function updateConversation(id: string, updates: any): void {
         thinkingEnabled: 'thinking_enabled',
         reasoningEffort: 'reasoning_effort',
     };
-
     for (const [key, dbColumn] of Object.entries(allowedFields)) {
         if (updates[key] !== undefined) {
             fields.push(`${dbColumn} = ?`);
@@ -56,39 +49,39 @@ export function updateConversation(id: string, updates: any): void {
             values.push(val);
         }
     }
-
     if (updates.mcpServerOverrides !== undefined) {
         fields.push('mcp_server_overrides = ?');
         values.push(JSON.stringify(updates.mcpServerOverrides));
     }
-
     // Always update lastModified
     fields.push('last_modified = ?');
     values.push(Date.now());
-
     if (fields.length === 0) return;
-
     values.push(id);
-
     const stmt = db.prepare(`UPDATE conversations SET ${fields.join(', ')} WHERE id = ?`);
     stmt.run(...values);
 }
 
+
+export function getForkDescendants(id: string): string[] {
+    const ids: string[] = [];
+    const queue = [id];[];
+    while (queue.length > 0) {
+        const parentId = queue.shift()!;
+        ids.push(parentId);
+
+        const children = db.prepare('SELECT id FROM conversations WHERE forked_from_conversation_id = ?').all(parentId) as { id: string }[];
+        for (const child of children) {
+            queue.push(child.id);
+        }
+    }
+    return ids;
+}
+
 export function deleteConversation(id: string, options?: { deleteWithForks?: boolean }): void {
     if (options?.deleteWithForks) {
-        // Collect all descendant forks to delete
-        const idsToDelete: string[] = [];
-        const queue = [id];
+        const idsToDelete = getForkDescendants(id);
 
-        while (queue.length > 0) {
-            const parentId = queue.shift()!;
-            idsToDelete.push(parentId);
-            
-            const children = db.prepare('SELECT id FROM conversations WHERE forked_from_conversation_id = ?').all(parentId) as {id: string}[];
-            for (const child of children) {
-                queue.push(child.id);
-            }
-        }
 
         const deleteConvStmt = db.prepare('DELETE FROM conversations WHERE id = ?');
         const deleteMsgsStmt = db.prepare('DELETE FROM messages WHERE conv_id = ?');
@@ -127,7 +120,7 @@ export function importConversations(data: { conv: any; messages: any[] }[]): { i
         INSERT INTO conversations (id, name, last_modified, curr_node, forked_from_conversation_id, mcp_server_overrides, thinking_enabled, reasoning_effort, user_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    
+
     // We will do messages in another module or here. It's easier to just use standard SQL for messages.
     // For now, I'll export a general function that takes message insert dependencies if needed, or handle it here.
     const insertMsg = db.prepare(`
@@ -190,18 +183,18 @@ export function forkConversation(sourceConvId: string, atMessageId: string, opti
     if (!sourceConv) throw new Error(`Source conversation ${sourceConvId} not found`);
 
     const allMessages = db.prepare('SELECT * FROM messages WHERE conv_id = ?').all(sourceConvId) as any[];
-    
+
     // Find path to root
     const pathMessages: any[] = [];
     let currentId: string | null = atMessageId;
-    
+
     while (currentId) {
         const msg = allMessages.find(m => m.id === currentId);
         if (!msg) break;
         pathMessages.push(msg);
         currentId = msg.parent || null;
     }
-    
+
     // Reverse to get root -> leaf order
     pathMessages.reverse();
 
@@ -218,7 +211,7 @@ export function forkConversation(sourceConvId: string, atMessageId: string, opti
     const clonedMessages = pathMessages.map(row => {
         const newId = idMap.get(row.id)!;
         const newParent = row.parent ? (idMap.get(row.parent) ?? null) : null;
-        
+
         const oldChildren = JSON.parse(row.children || '[]');
         const newChildren = oldChildren
             .filter((childId: string) => idMap.has(childId))
@@ -235,7 +228,7 @@ export function forkConversation(sourceConvId: string, atMessageId: string, opti
     });
 
     const lastClonedMessage = clonedMessages[clonedMessages.length - 1];
-    
+
     const transaction = db.transaction(() => {
         db.prepare(`
             INSERT INTO conversations (id, name, last_modified, curr_node, forked_from_conversation_id, mcp_server_overrides, thinking_enabled, reasoning_effort, user_id)
