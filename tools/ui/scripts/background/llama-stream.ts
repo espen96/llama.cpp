@@ -157,12 +157,20 @@ async function runAgenticLoop(
                 const parentId = lastToolResultMessageId || currentAssistantMessageId;
                 createAssistantMessagePlaceholder(opts.conversationId, parentId, newMsgId);
                 currentAssistantMessageId = newMsgId;
+                task.assistantMessageId = newMsgId;
 
                 // Broadcast assistant_message event to SSE clients
                 sseHub.send(taskId, 'assistant_message', {
                     messageId: newMsgId,
                     parentId
                 });
+            }
+
+            // Start/Restart the periodic SQLite flush timer if it was cleared
+            if (!task.dbFlushTimer) {
+                task.dbFlushTimer = setInterval(() => {
+                    flushToDB(task);
+                }, DB_FLUSH_INTERVAL_MS);
             }
 
             // Reset per-turn accumulators
