@@ -4,6 +4,9 @@ import bodyParser from 'body-parser';
 import * as conversations from './sqlite/conversations.js';
 import * as messages from './sqlite/messages.js';
 import * as settings from './sqlite/settings.js';
+import * as llamaStream from './background/llama-stream.js';
+import * as taskManager from './background/task-manager.js';
+import * as sseHub from './background/sse-hub.js';
 
 export function sqliteApiPlugin(): Plugin {
     return {
@@ -152,6 +155,134 @@ export function sqliteApiPlugin(): Plugin {
                 try {
                     const result = conversations.importConversations(req.body.data);
                     res.json(result);
+                } catch (e: any) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
+            // --- Settings ---
+
+            // --- Background Chat Generation ---
+
+            /**
+             * POST /api/chat
+             * Start a background generation task.
+             * Body: { conversationId, messages, options, connectionOverride? }
+             * Returns: { taskId, assistantMessageId }
+             */
+            app.post('/chat', async (req, res) => {
+                try {
+                    const { conversationId, messages: msgs, options = {}, connectionOverride } = req.body;
+
+                    if (!conversationId || !msgs) {
+                        res.status(400).json({ error: 'conversationId and messages are required' });
+                        return;
+                    }
+
+                    const conv = conversations.getConversation(conversationId);
+                    if (!conv) {
+                        res.status(404).json({ error: 'Conversation not found' });
+                        return;
+                    }
+
+                    // The frontend has already created the user message and assistant placeholder
+                    // via /api/messages/branch. We just need the assistantMessageId from the body.
+                    const { assistantMessageId } = req.body;
+                    if (!assistantMessageId) {
+                        res.status(400).json({ error: 'assistantMessageId is required' });
+                        return;
+                    }
+
+                    // Resolve upstream connection
+                    const connection = connectionOverride || llamaStream.resolveUpstreamConnection();
+
+                    // Build the OAI request body from what the frontend sent
+                    const requestBody = {
+                        messages: msgs,
+                        ...options
+                    };
+
+                    // Set generation_status to 'streaming' on the placeholder message
+                    messages.updateMessage(assistantMessageId, { generation_status: 'streaming' });
+
+                    const taskId = llamaStream.startStream({
+                        requestBody,
+                        baseUrl: connection.baseUrl,
+                        apiKey: connection.apiKey,
+                        conversationId,
+                        assistantMessageId,
+                        xConversationId: conversationId
+                    });
+
+                    res.json({ taskId, assistantMessageId });
+                } catch (e: any) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
+            /**
+             * GET /api/chat/:taskId/stream
+             * SSE endpoint — browser subscribes here to get live tokens.
+             */
+            app.get('/chat/:taskId/stream', (req, res) => {
+                const { taskId } = req.params;
+                const task = taskManager.getTask(taskId);
+
+                if (!task) {
+                    res.status(404).json({ error: 'Task not found' });
+                    return;
+                }
+
+                // If task already finished, let the client know immediately
+                if (task.status !== 'streaming') {
+                    res.writeHead(200, {
+                        'Content-Type': 'text/event-stream',
+                        'Cache-Control': 'no-cache',
+                        'Connection': 'keep-alive'
+                    });
+                    res.write(`event: done\ndata: {"status":"${task.status}"}\n\n`);
+                    res.end();
+                    return;
+                }
+
+                const cleanup = sseHub.addClient(taskId, res);
+
+                req.on('close', () => {
+                    cleanup();
+                });
+            });
+
+            /**
+             * GET /api/chat/active
+             * List all currently streaming tasks (for reconnect on page reload).
+             */
+            app.get('/chat/active', (_req, res) => {
+                try {
+                    const active = taskManager.getAllActiveTasks().map((t) => ({
+                        taskId: t.taskId,
+                        conversationId: t.conversationId,
+                        assistantMessageId: t.assistantMessageId,
+                        status: t.status,
+                        createdAt: t.createdAt
+                    }));
+                    res.json(active);
+                } catch (e: any) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
+            /**
+             * DELETE /api/chat/:taskId
+             * Abort a running generation task.
+             */
+            app.delete('/chat/:taskId', (req, res) => {
+                try {
+                    const aborted = taskManager.abortTask(req.params.taskId);
+                    if (!aborted) {
+                        res.status(404).json({ error: 'Task not found or already finished' });
+                        return;
+                    }
+                    res.json({ success: true });
                 } catch (e: any) {
                     res.status(500).json({ error: e.message });
                 }
