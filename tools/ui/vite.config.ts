@@ -9,6 +9,7 @@ import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { llamaCppBuildPlugin } from './scripts/vite-plugin-llama-cpp-build';
 import { corsProxyPlugin } from './scripts/vite-plugin-cors-proxy';
 import { localToolsPlugin } from './scripts/vite-plugin-local-tools';
+import { sqliteApiPlugin } from './scripts/vite-plugin-sqlite-api';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -31,6 +32,7 @@ export default defineConfig({
 		tailwindcss(),
 		sveltekit(),
 		devtoolsJson(),
+		sqliteApiPlugin(),
 		llamaCppBuildPlugin(),
 		corsProxyPlugin(),
 		localToolsPlugin()

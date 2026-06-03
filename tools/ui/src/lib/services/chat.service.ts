@@ -310,10 +310,15 @@ export class ChatService {
 			}
 		}
 
+		const requestHeaders = getJsonHeaders();
+		if (conversationId) {
+			requestHeaders['X-Conversation-Id'] = conversationId;
+		}
+
 		try {
 			const response = await fetch(API_CHAT.COMPLETIONS, {
 				method: 'POST',
-				headers: getJsonHeaders(),
+				headers: requestHeaders,
 				body: JSON.stringify(requestBody),
 				signal
 			});

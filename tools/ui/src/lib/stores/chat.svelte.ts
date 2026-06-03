@@ -531,7 +531,7 @@ class ChatStore {
 				timestamp: Date.now(),
 				toolCalls: '',
 				children: [],
-				model: null
+				model: undefined
 			},
 			parentId || null
 		);
@@ -821,7 +821,7 @@ class ChatStore {
 						timestamp: Date.now(),
 						toolCalls: '',
 						children: [],
-						model: resolvedModel
+						model: resolvedModel || undefined
 					},
 					lastMsg.id
 				);
@@ -1176,7 +1176,7 @@ class ChatStore {
 					content: '',
 					toolCalls: '',
 					children: [],
-					model: null
+					model: undefined
 				},
 				parentMessage.id
 			);
@@ -1326,7 +1326,7 @@ class ChatStore {
 					content: '',
 					toolCalls: '',
 					children: [],
-					model: null
+					model: undefined
 				},
 				anchorMessage.id
 			);
@@ -1702,7 +1702,7 @@ class ChatStore {
 					content: '',
 					toolCalls: '',
 					children: [],
-					model: null
+					model: undefined
 				},
 				userMessageId
 			);
