@@ -46,10 +46,16 @@ export function addClient(taskId: string, res: Response): () => void {
         }
     }, 15_000);
 
-    return () => {
+    const cleanup = () => {
         clearInterval(heartbeat);
         removeClient(taskId, client);
     };
+
+    // Catch unhandled stream errors which could crash the Node server
+    res.on('error', cleanup);
+    res.on('close', cleanup);
+
+    return cleanup;
 }
 
 function removeClient(taskId: string, client: SseClient): void {

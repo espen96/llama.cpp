@@ -263,7 +263,11 @@ export function sqliteApiPlugin(): Plugin {
                         conversationId: t.conversationId,
                         assistantMessageId: t.assistantMessageId,
                         status: t.status,
-                        createdAt: t.createdAt
+                        createdAt: t.createdAt,
+                        accumulatedContent: t.accumulatedContent,
+                        accumulatedReasoning: t.accumulatedReasoning,
+                        resolvedModel: t.resolvedModel,
+                        completionId: t.completionId
                     }));
                     res.json(active);
                 } catch (e: any) {

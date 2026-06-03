@@ -130,10 +130,8 @@ export function startBackgroundChat(
         // When the outer abort fires, close the stream
         combinedSignal.addEventListener('abort', () => {
             eventSource?.close();
-            if (taskId) {
-                // Best-effort server abort
-                fetch(`/api/chat/${taskId}`, { method: 'DELETE' }).catch(() => {});
-            }
+            // Note: We intentionally do NOT send DELETE /api/chat/:taskId here.
+            // The backend owns the upstream connection and continues streaming.
         });
     }
 
@@ -214,6 +212,140 @@ export function startBackgroundChat(
     };
 }
 
+/**
+ * Reattach to an existing background generation task.
+ * Subscribes to the SSE stream using the existing taskId.
+ */
+export function reconnectBackgroundChat(
+    taskId: string,
+    initialContent: string,
+    initialReasoning: string,
+    callbacks: ChatStreamCallbacksBackground,
+    signal?: AbortSignal
+): { abort: () => void } {
+    let eventSource: EventSource | null = null;
+    let accumulatedContent = initialContent;
+    let accumulatedReasoning = initialReasoning;
+
+    const pendingToolCalls: Record<number, {
+        id: string;
+        type: string;
+        function: { name: string; arguments: string };
+    }> = {};
+
+    const abortController = new AbortController();
+    const combinedSignal = signal ? mergeSignals(signal, abortController.signal) : abortController.signal;
+
+    function subscribeToStream(id: string) {
+        const url = `/api/chat/${encodeURIComponent(id)}/stream`;
+        eventSource = new EventSource(url);
+
+        eventSource.onmessage = (event) => {
+            processChunk(event.data);
+        };
+
+        eventSource.addEventListener('done', () => {
+            eventSource?.close();
+            finalize();
+        });
+
+        eventSource.addEventListener('error', (event) => {
+            const msg = (event as MessageEvent).data;
+            eventSource?.close();
+            let errorObj: unknown;
+            try { errorObj = JSON.parse(msg); } catch { errorObj = { message: msg }; }
+            callbacks.onError?.(
+                new Error((errorObj as { message?: string })?.message || 'Stream error')
+            );
+        });
+
+        eventSource.onerror = () => {
+            if (combinedSignal.aborted) {
+                eventSource?.close();
+            }
+        };
+
+        combinedSignal.addEventListener('abort', () => {
+            eventSource?.close();
+            // Reconnect flow doesn't abort the backend task
+        });
+    }
+
+    function processChunk(data: string): void {
+        if (data === '[DONE]') {
+            finalize();
+            return;
+        }
+        try {
+            const parsed = JSON.parse(data);
+            const choice = parsed?.choices?.[0];
+            if (!choice) return;
+
+            if (parsed.model) callbacks.onModel?.(parsed.model);
+            if (parsed.id) callbacks.onCompletionId?.(parsed.id);
+
+            const delta = choice.delta;
+            if (!delta) return;
+
+            if (typeof delta.content === 'string' && delta.content) {
+                accumulatedContent += delta.content;
+                callbacks.onChunk?.(delta.content);
+            }
+
+            if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
+                accumulatedReasoning += delta.reasoning_content;
+                callbacks.onReasoningChunk?.(delta.reasoning_content);
+            }
+
+            if (delta.tool_calls) {
+                for (const tc of delta.tool_calls) {
+                    const idx = tc.index ?? 0;
+                    if (!pendingToolCalls[idx]) {
+                        pendingToolCalls[idx] = {
+                            id: tc.id || '',
+                            type: tc.type || 'function',
+                            function: { name: tc.function?.name || '', arguments: '' }
+                        };
+                    }
+                    if (tc.function?.arguments) {
+                        pendingToolCalls[idx].function.arguments += tc.function.arguments;
+                    }
+                    if (tc.function?.name) {
+                        pendingToolCalls[idx].function.name = tc.function.name;
+                    }
+                }
+                callbacks.onToolCallChunk?.(delta.tool_calls);
+            }
+
+            if (parsed.usage) {
+                const u = parsed.usage;
+                const timings: ChatMessageTimings = {
+                    prompt_n: u.prompt_tokens ?? 0,
+                    predicted_n: u.completion_tokens ?? 0
+                };
+                callbacks.onTimings?.(timings);
+            }
+
+        } catch {
+            // Malformed chunk
+        }
+    }
+
+    function finalize(): void {
+        callbacks.onComplete?.(accumulatedContent, accumulatedReasoning || undefined).catch(
+            (err) => callbacks.onError?.(err instanceof Error ? err : new Error(String(err)))
+        );
+    }
+
+    subscribeToStream(taskId);
+
+    return {
+        abort() {
+            abortController.abort();
+        }
+    };
+}
+
 /** Fetch current active tasks (for reconnect on page reload). */
 export async function getActiveTasks(): Promise<Array<{
     taskId: string;
@@ -221,6 +353,10 @@ export async function getActiveTasks(): Promise<Array<{
     assistantMessageId: string;
     status: string;
     createdAt: number;
+    accumulatedContent?: string;
+    accumulatedReasoning?: string;
+    resolvedModel?: string | null;
+    completionId?: string | null;
 }>> {
     const resp = await fetch('/api/chat/active');
     if (!resp.ok) return [];

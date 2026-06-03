@@ -116,11 +116,133 @@ export class ChatService {
 	 * @returns {Promise<string | void>} that resolves to the complete response string (non-streaming) or void (streaming)
 	 * @throws {Error} if the request fails or is aborted
 	 */
+	/**
+	 * Build a normalized OAI-compatible request body without making a network request.
+	 * Used by the background generation path to hand the fully-resolved body to Node.
+	 */
+	static async buildOaiRequestBody(
+		messages: ApiChatMessageData[] | (DatabaseMessage & { extra?: DatabaseMessageExtra[] })[],
+		options: SettingsChatServiceOptions = {}
+	): Promise<Record<string, unknown>> {
+		const {
+			tools,
+			temperature, max_tokens,
+			dynatemp_range, dynatemp_exponent,
+			top_k, top_p, min_p,
+			xtc_probability, xtc_threshold, typ_p,
+			repeat_last_n, repeat_penalty,
+			presence_penalty, frequency_penalty,
+			dry_multiplier, dry_base, dry_allowed_length, dry_penalty_last_n,
+			samplers, backend_sampling, custom, timings_per_token,
+			disableReasoningParsing, excludeReasoningFromContext,
+			enableThinking, reasoningEffort
+		} = options;
+
+		const normalizedMessages: ApiChatMessageData[] = (
+			await Promise.all(
+				messages.map((msg) => {
+					if ('id' in msg && 'convId' in msg && 'timestamp' in msg) {
+						return ChatService.convertDbMessageToApiChatMessageData(
+							msg as DatabaseMessage & { extra?: DatabaseMessageExtra[] }
+						);
+					}
+					return msg as ApiChatMessageData;
+				})
+			)
+		).filter((msg) => {
+			if (msg.role === MessageRole.SYSTEM) {
+				const content = typeof msg.content === 'string' ? msg.content : '';
+				return content.trim().length > 0;
+			}
+			return true;
+		});
+
+		if (options.model && !modelsStore.modelSupportsVision(options.model)) {
+			normalizedMessages.forEach((msg) => {
+				if (Array.isArray(msg.content)) {
+					msg.content = msg.content.filter(
+						(part: ApiChatMessageContentPart) => part.type !== ContentPartType.IMAGE_URL
+					);
+					if (
+						msg.content.length === 1 &&
+						msg.content[0].type === ContentPartType.TEXT &&
+						typeof msg.content[0].text === 'string'
+					) {
+						msg.content = msg.content[0].text;
+					}
+				}
+			});
+		}
+
+		const requestBody: Record<string, unknown> = {
+			messages: normalizedMessages.map((msg: ApiChatMessageData) => {
+				const mapped: Record<string, unknown> = {
+					role: msg.role,
+					content: msg.content,
+					tool_calls: msg.tool_calls,
+					tool_call_id: msg.tool_call_id
+				};
+				if (!excludeReasoningFromContext && msg.reasoning_content) {
+					mapped.reasoning_content = msg.reasoning_content;
+				}
+				return mapped;
+			}),
+			stream: true,
+			return_progress: true,
+			tools: tools && tools.length > 0 ? tools : undefined,
+			reasoning_format: disableReasoningParsing ? ReasoningFormat.NONE : ReasoningFormat.AUTO,
+			chat_template_kwargs: { enable_thinking: enableThinking },
+			reasoning_control: true
+		};
+
+		if (options.model) requestBody.model = options.model;
+
+		const reasoningBudgetTokens =
+			enableThinking && reasoningEffort ? (REASONING_EFFORT_TOKENS[reasoningEffort] ?? -1) : -1;
+		if (reasoningBudgetTokens >= 0) requestBody.thinking_budget_tokens = reasoningBudgetTokens;
+
+		if (temperature !== undefined) requestBody.temperature = temperature;
+		if (max_tokens !== undefined) requestBody.max_tokens = max_tokens !== null && max_tokens !== 0 ? max_tokens : -1;
+		if (dynatemp_range !== undefined) requestBody.dynatemp_range = dynatemp_range;
+		if (dynatemp_exponent !== undefined) requestBody.dynatemp_exponent = dynatemp_exponent;
+		if (top_k !== undefined) requestBody.top_k = top_k;
+		if (top_p !== undefined) requestBody.top_p = top_p;
+		if (min_p !== undefined) requestBody.min_p = min_p;
+		if (xtc_probability !== undefined) requestBody.xtc_probability = xtc_probability;
+		if (xtc_threshold !== undefined) requestBody.xtc_threshold = xtc_threshold;
+		if (typ_p !== undefined) requestBody.typ_p = typ_p;
+		if (repeat_last_n !== undefined) requestBody.repeat_last_n = repeat_last_n;
+		if (repeat_penalty !== undefined) requestBody.repeat_penalty = repeat_penalty;
+		if (presence_penalty !== undefined) requestBody.presence_penalty = presence_penalty;
+		if (frequency_penalty !== undefined) requestBody.frequency_penalty = frequency_penalty;
+		if (dry_multiplier !== undefined) requestBody.dry_multiplier = dry_multiplier;
+		if (dry_base !== undefined) requestBody.dry_base = dry_base;
+		if (dry_allowed_length !== undefined) requestBody.dry_allowed_length = dry_allowed_length;
+		if (dry_penalty_last_n !== undefined) requestBody.dry_penalty_last_n = dry_penalty_last_n;
+		if (samplers !== undefined) {
+			requestBody.samplers =
+				typeof samplers === 'string'
+					? samplers.split(';').filter((s: string) => s.trim())
+					: samplers;
+		}
+		if (backend_sampling !== undefined) requestBody.backend_sampling = backend_sampling;
+		if (timings_per_token !== undefined) requestBody.timings_per_token = timings_per_token;
+		if (custom) {
+			try {
+				Object.assign(requestBody, typeof custom === 'string' ? JSON.parse(custom) : custom);
+			} catch { /* ignore bad custom JSON */ }
+		}
+
+		return requestBody;
+	}
+
 	static async sendMessage(
 		messages: ApiChatMessageData[] | (DatabaseMessage & { extra?: DatabaseMessageExtra[] })[],
+
 		options: SettingsChatServiceOptions = {},
 		conversationId?: string,
-		signal?: AbortSignal
+		signal?: AbortSignal,
+		assistantMessageId?: string
 	): Promise<string | void> {
 		const {
 			stream,
@@ -167,6 +289,168 @@ export class ChatService {
 			reasoningEffort,
 			continueFinalMessage
 		} = options;
+
+		if (conversationId && assistantMessageId) {
+			return new Promise<string | void>(async (resolve, reject) => {
+				const abortController = new AbortController();
+				const combinedSignal = signal ? mergeSignals(signal, abortController.signal) : abortController.signal;
+
+				let eventSource: EventSource | null = null;
+				let taskId: string | null = null;
+				let accumulatedContent = '';
+				let accumulatedReasoning = '';
+				let lastTimings: ChatMessageTimings | undefined;
+
+				const pendingToolCalls: Record<number, {
+					id: string;
+					type: string;
+					function: { name: string; arguments: string };
+				}> = {};
+
+				const finalize = () => {
+					const toolCallsList = Object.values(pendingToolCalls);
+					const toolCallsStr = toolCallsList.length > 0 ? JSON.stringify(toolCallsList) : undefined;
+					if (onComplete) {
+						onComplete(accumulatedContent, accumulatedReasoning || undefined, lastTimings, toolCallsStr);
+					}
+					resolve(accumulatedContent);
+				};
+
+				try {
+					const requestBody = await ChatService.buildOaiRequestBody(messages, options);
+					
+					const resp = await fetch('/api/chat', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({
+							conversationId,
+							assistantMessageId,
+							messages: requestBody.messages,
+							options: Object.fromEntries(
+								Object.entries(requestBody).filter(([k]) => k !== 'messages')
+							)
+						}),
+						signal: combinedSignal
+					});
+
+					if (!resp.ok) {
+						const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+						throw new Error(err.error || `HTTP ${resp.status}`);
+					}
+
+					const data = await resp.json();
+					taskId = data.taskId;
+
+					if (combinedSignal.aborted) {
+						resolve();
+						return;
+					}
+
+					if (typeof window !== 'undefined') {
+						const url = `/api/chat/${encodeURIComponent(taskId!)}/stream`;
+						eventSource = new EventSource(url);
+
+						eventSource.onmessage = (event) => {
+							const chunkData = event.data;
+							if (chunkData === '[DONE]') {
+								eventSource?.close();
+								finalize();
+								return;
+							}
+							try {
+								const parsed = JSON.parse(chunkData);
+								const choice = parsed?.choices?.[0];
+								if (!choice) return;
+
+								if (parsed.model && onModel) onModel(parsed.model);
+								if (parsed.id && onCompletionId) onCompletionId(parsed.id);
+
+								const delta = choice.delta;
+								if (!delta) return;
+
+								if (typeof delta.content === 'string' && delta.content) {
+									accumulatedContent += delta.content;
+									if (onChunk) onChunk(delta.content);
+								}
+
+								if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
+									accumulatedReasoning += delta.reasoning_content;
+									if (onReasoningChunk) onReasoningChunk(delta.reasoning_content);
+								}
+
+								if (delta.tool_calls) {
+									for (const tc of delta.tool_calls) {
+										const idx = tc.index ?? 0;
+										if (!pendingToolCalls[idx]) {
+											pendingToolCalls[idx] = {
+												id: tc.id || '',
+												type: tc.type || 'function',
+												function: { name: tc.function?.name || '', arguments: '' }
+											};
+										}
+										if (tc.function?.arguments) {
+											pendingToolCalls[idx].function.arguments += tc.function.arguments;
+										}
+										if (tc.function?.name) {
+											pendingToolCalls[idx].function.name = tc.function.name;
+										}
+									}
+									if (onToolCallChunk) onToolCallChunk(JSON.stringify(delta.tool_calls));
+								}
+
+								if (parsed.usage && onTimings) {
+									const u = parsed.usage;
+									lastTimings = {
+										prompt_n: u.prompt_tokens ?? 0,
+										predicted_n: u.completion_tokens ?? 0
+									};
+									onTimings(lastTimings);
+								}
+							} catch {
+								// skip malformed
+							}
+						};
+
+						eventSource.addEventListener('done', () => {
+							eventSource?.close();
+							finalize();
+						});
+
+						eventSource.addEventListener('error', (event) => {
+							const msg = (event as MessageEvent).data;
+							eventSource?.close();
+							let errorObj: unknown;
+							try { errorObj = JSON.parse(msg); } catch { errorObj = { message: msg }; }
+							const err = new Error((errorObj as { message?: string })?.message || 'Stream error');
+							if (onError) onError(err);
+							reject(err);
+						});
+
+						eventSource.onerror = () => {
+							if (combinedSignal.aborted) {
+								eventSource?.close();
+								resolve();
+							}
+						};
+
+						combinedSignal.addEventListener('abort', () => {
+							eventSource?.close();
+						});
+					} else {
+						resolve();
+					}
+
+				} catch (err: unknown) {
+					if (err instanceof Error && (err.name === 'AbortError' || err.message.includes('aborted'))) {
+						resolve();
+					} else {
+						const error = err instanceof Error ? err : new Error(String(err));
+						if (onError) onError(error);
+						reject(error);
+					}
+				}
+			});
+		}
 
 		const normalizedMessages: ApiChatMessageData[] = (
 			await Promise.all(
@@ -1224,4 +1508,16 @@ export class ChatService {
 
 		onTimingsCallback(timings, promptProgress);
 	}
+}
+
+function mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
+	const controller = new AbortController();
+	const abort = () => controller.abort();
+	if (a.aborted || b.aborted) {
+		controller.abort();
+	} else {
+		a.addEventListener('abort', abort, { once: true });
+		b.addEventListener('abort', abort, { once: true });
+	}
+	return controller.signal;
 }

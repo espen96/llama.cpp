@@ -99,7 +99,11 @@ export function markTaskError(taskId: string): void {
 
 export function abortTask(taskId: string): boolean {
     const task = tasks.get(taskId);
-    if (!task) return false;
+    if (!task) {
+        console.log(`[task-manager] abortTask: task ${taskId} not found`);
+        return false;
+    }
+    console.log(`[task-manager] abortTask called for task ${taskId}, current status: ${task.status}`);
     if (task.status === 'streaming') {
         task.controller.abort();
         task.status = 'aborted';

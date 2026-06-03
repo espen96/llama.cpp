@@ -18,6 +18,7 @@
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { isRouterMode, serverStore } from '$lib/stores/server.svelte';
+	import { chatStore } from '$lib/stores/chat.svelte';
 	import { config, settingsStore } from '$lib/stores/settings.svelte';
 	import { ModeWatcher } from 'mode-watcher';
 	import { ROUTES } from '$lib/constants/routes';
@@ -162,6 +163,9 @@
 			rehydrate();
 		}
 		
+		// Attempt to reconnect to any background streams
+		chatStore.reconnectActiveTasks();
+
 		storageInitialized = true;
 		mounted = true;
 	});

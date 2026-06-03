@@ -140,6 +140,7 @@ export interface AgenticFlowParams {
 	callbacks: AgenticFlowCallbacks;
 	signal?: AbortSignal;
 	perChatOverrides?: McpServerOverride[];
+	assistantMessageId?: string;
 }
 
 /**

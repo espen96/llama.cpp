@@ -14,6 +14,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { DatabaseService } from '$lib/services/database.service';
 import { ChatService } from '$lib/services/chat.service';
+import { startBackgroundChat, reconnectBackgroundChat, getActiveTasks } from '$lib/services/chat-api.service';
 import { conversationsStore } from '$lib/stores/conversations.svelte';
 import { config } from '$lib/stores/settings.svelte';
 import { agenticStore } from '$lib/stores/agentic.svelte';
@@ -245,6 +246,102 @@ class ChatStore {
 
 	clearPendingEditMessageId(): void {
 		this.pendingEditMessageId = null;
+	}
+
+	async reconnectActiveTasks(): Promise<void> {
+		if (typeof window === 'undefined') return;
+		try {
+			const activeTasks = await getActiveTasks();
+			for (const task of activeTasks) {
+				if (task.status === 'streaming') {
+					// Check if we already have it tracked to avoid double-subscriptions
+					if (!this.chatStreamingStates.has(task.conversationId)) {
+						this.reconnectToTask(task);
+					}
+				}
+			}
+		} catch (error) {
+			console.error('Failed to reconnect to active tasks:', error);
+		}
+	}
+
+	private reconnectToTask(task: any): void {
+		const convId = task.conversationId;
+		const messageId = task.assistantMessageId;
+		let streamedContent = task.accumulatedContent || '';
+		let streamedReasoning = task.accumulatedReasoning || '';
+		
+		this.setChatLoading(convId, true);
+		this.setStreamingActive(true);
+		
+		// Immediately populate the store/UI with the text generated so far
+		this.setChatStreaming(convId, streamedContent, messageId);
+		const idx = conversationsStore.findMessageIndex(messageId);
+		if (idx !== -1) {
+			conversationsStore.updateMessageAtIndex(idx, {
+				content: streamedContent,
+				reasoningContent: streamedReasoning || undefined,
+				model: task.resolvedModel || undefined,
+				completionId: task.completionId || undefined
+			});
+		}
+		if (streamedReasoning) {
+			this.setChatReasoning(convId, true);
+		}
+		
+		const abortController = this.getOrCreateAbortController(convId);
+		
+		const handle = reconnectBackgroundChat(
+			task.taskId,
+			streamedContent,
+			streamedReasoning,
+			{
+				onChunk: (chunk: string) => {
+					streamedContent += chunk;
+					this.setChatStreaming(convId, streamedContent, messageId);
+					const idx = conversationsStore.findMessageIndex(messageId);
+					if (idx !== -1) {
+						conversationsStore.updateMessageAtIndex(idx, { content: streamedContent });
+					}
+					this.setChatReasoning(convId, false);
+				},
+				onReasoningChunk: (chunk: string) => {
+					streamedReasoning += chunk;
+					this.setChatStreaming(convId, streamedContent, messageId);
+					const idx = conversationsStore.findMessageIndex(messageId);
+					if (idx !== -1) {
+						conversationsStore.updateMessageAtIndex(idx, { reasoningContent: streamedReasoning });
+					}
+					this.setChatReasoning(convId, true);
+				},
+				onComplete: async (content: string, reasoningContent?: string) => {
+					const idx = conversationsStore.findMessageIndex(messageId);
+					if (idx !== -1) {
+						conversationsStore.updateMessageAtIndex(idx, {
+							content,
+							reasoningContent: reasoningContent || undefined
+						});
+					}
+					await conversationsStore.updateCurrentNode(messageId);
+					this.setStreamingActive(false);
+					this.setChatLoading(convId, false);
+					this.clearChatStreaming(convId);
+					this.setProcessingState(convId, null);
+				},
+				onError: (error: Error) => {
+					this.setStreamingActive(false);
+					this.setChatLoading(convId, false);
+					this.clearChatStreaming(convId);
+					this.setProcessingState(convId, null);
+					console.error('Reconnect stream error:', error);
+				}
+			},
+			undefined // backend owns connection
+		);
+
+		abortController.signal.addEventListener('abort', () => {
+			handle.abort();
+		});
 	}
 
 	savePendingDraft(message: string, files: ChatUploadedFile[]): void {
@@ -895,7 +992,8 @@ class ChatStore {
 				},
 				callbacks: streamCallbacks,
 				signal: abortController.signal,
-				perChatOverrides
+				perChatOverrides,
+				assistantMessageId: assistantMessage.id
 			});
 			if (agenticResult.handled) {
 				// Generate LLM based title for new conversations after agentic flow completes
@@ -911,64 +1009,71 @@ class ChatStore {
 			}
 		}
 
-		await ChatService.sendMessage(
-			allMessages,
-			{
-				...this.getApiOptions(),
-				...(effectiveModel ? { model: effectiveModel } : {}),
-				stream: true,
-				onChunk: streamCallbacks.onChunk,
-				onReasoningChunk: streamCallbacks.onReasoningChunk,
-				onModel: streamCallbacks.onModel,
-				onCompletionId: streamCallbacks.onCompletionId,
-				onTimings: streamCallbacks.onTimings,
-				onComplete: async (
-					finalContent?: string,
-					reasoningContent?: string,
-					timings?: ChatMessageTimings,
-					toolCalls?: string
-				) => {
-					const content = streamedContent || finalContent || '';
-					const reasoning = streamedReasoningContent || reasoningContent;
-					const updateData: Record<string, unknown> = {
-						content,
-						reasoningContent: reasoning || undefined,
-						toolCalls: toolCalls || '',
-						timings
-					};
-					if (resolvedModel && !modelPersisted) updateData.model = resolvedModel;
-					await DatabaseService.updateMessage(currentMessageId, updateData);
-					const idx = conversationsStore.findMessageIndex(currentMessageId);
-					const uiUpdate: Partial<DatabaseMessage> = {
-						content,
-						reasoningContent: reasoning || undefined,
-						toolCalls: toolCalls || ''
-					};
-					if (timings) uiUpdate.timings = timings;
-					if (resolvedModel) uiUpdate.model = resolvedModel;
-					conversationsStore.updateMessageAtIndex(idx, uiUpdate);
-					await conversationsStore.updateCurrentNode(currentMessageId);
-					cleanupStreamingState();
-					if (onComplete) await onComplete(content);
-					if (isRouterMode()) modelsStore.fetchRouterModels().catch(console.error);
+		// --- Background generation path ---
+		// Build the fully-normalized OAI body on the frontend (attachment conversion etc.)
+		// then hand it to the Node middle tier. The backend fetches the LLM and writes
+		// to SQLite regardless of whether this SSE connection stays open.
+		const apiOptions = {
+			...this.getApiOptions(),
+			...(effectiveModel ? { model: effectiveModel } : {})
+		};
 
-					// Generate LLM based title for new conversations (avoids stale reference
-					// issue when user switches conversations while streaming)
-					if (firstUserMessageContent) {
-						await this.generateTitleWithLLM(firstUserMessageContent, streamedContent, convId);
-					}
+		const oaiBody = await ChatService.buildOaiRequestBody(allMessages, apiOptions);
 
-					// Check if there's a pending message queued during streaming
-					const pending = this.consumePendingMessage(convId);
-					if (pending) {
-						await this.sendMessage(pending.content, pending.extras);
+		await new Promise<void>((resolve) => {
+			const handle = startBackgroundChat(
+				{
+					conversationId: convId,
+					assistantMessageId: assistantMessage.id,
+					messages: (oaiBody.messages as unknown[]) ?? [],
+					options: Object.fromEntries(
+						Object.entries(oaiBody).filter(([k]) => k !== 'messages')
+					)
+				},
+				{
+					onChunk: streamCallbacks.onChunk,
+					onReasoningChunk: streamCallbacks.onReasoningChunk,
+					onModel: streamCallbacks.onModel,
+					onCompletionId: streamCallbacks.onCompletionId,
+					onComplete: async (content: string, reasoningContent?: string) => {
+						// The backend has already written to SQLite; we just update the UI
+						const idx = conversationsStore.findMessageIndex(currentMessageId);
+						const uiUpdate: Partial<DatabaseMessage> = {
+							content,
+							reasoningContent: reasoningContent || undefined
+						};
+						if (resolvedModel) uiUpdate.model = resolvedModel;
+						conversationsStore.updateMessageAtIndex(idx, uiUpdate);
+						await conversationsStore.updateCurrentNode(currentMessageId);
+						cleanupStreamingState();
+						if (onComplete) await onComplete(content);
+						if (isRouterMode()) modelsStore.fetchRouterModels().catch(console.error);
+						if (firstUserMessageContent) {
+							await this.generateTitleWithLLM(firstUserMessageContent, streamedContent, convId);
+						}
+						const pending = this.consumePendingMessage(convId);
+						if (pending) {
+							await this.sendMessage(pending.content, pending.extras);
+						}
+						resolve();
+					},
+					onError: async (error: Error) => {
+						await streamCallbacks.onError?.(error);
+						resolve();
 					}
 				},
-				onError: streamCallbacks.onError
-			},
-			convId,
-			abortController.signal
-		);
+				// NOTE: We do NOT forward the abortController.signal to the backend task.
+				// The backend owns the upstream connection; the frontend aborting only
+				// disconnects the SSE client. This proves the backend is the source of truth.
+				undefined
+			);
+			// Store handle for potential future use (stop button wiring)
+			// When abortController fires (tab navigation etc.) only the SSE disconnects.
+			abortController.signal.addEventListener('abort', () => {
+				handle.abort();
+				// Do NOT call DELETE /api/chat/:taskId here — backend keeps running.
+			});
+		});
 	}
 
 	async stopGeneration(): Promise<void> {
@@ -1516,7 +1621,8 @@ class ChatStore {
 				},
 
 				msg.convId,
-				abortController.signal
+				abortController.signal,
+				msg.id
 			);
 		} catch (error) {
 			if (!isAbortError(error)) console.error('Failed to continue message:', error);

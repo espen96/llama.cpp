@@ -383,7 +383,7 @@ class AgenticStore {
 	}
 
 	async runAgenticFlow(params: AgenticFlowParams): Promise<AgenticFlowResult> {
-		const { conversationId, messages, options = {}, callbacks, signal, perChatOverrides } = params;
+		const { conversationId, messages, options = {}, callbacks, signal, perChatOverrides, assistantMessageId } = params;
 
 		// Clear any pending permissions/continue requests for this conversation when starting a new flow
 		this._pendingPermissions.set(conversationId, null);
@@ -451,7 +451,8 @@ class AgenticStore {
 				tools,
 				agenticConfig,
 				callbacks,
-				signal
+				signal,
+				assistantMessageId
 			});
 			return { handled: true };
 		} catch (error) {
@@ -480,8 +481,9 @@ class AgenticStore {
 		agenticConfig: AgenticConfig;
 		callbacks: AgenticFlowCallbacks;
 		signal?: AbortSignal;
+		assistantMessageId?: string;
 	}): Promise<void> {
-		const { conversationId, messages, options, tools, agenticConfig, callbacks, signal } = params;
+		const { conversationId, messages, options, tools, agenticConfig, callbacks, signal, assistantMessageId } = params;
 		const {
 			onChunk,
 			onReasoningChunk,
@@ -500,6 +502,7 @@ class AgenticStore {
 		const sessionMessages: AgenticMessage[] = toAgenticMessages(messages);
 		let capturedTimings: ChatMessageTimings | undefined;
 		let totalToolCallCount = 0;
+		let currentAssistantMessageId = assistantMessageId;
 
 		const agenticTimings: ChatMessageAgenticTimings = {
 			turns: 0,
@@ -541,7 +544,8 @@ class AgenticStore {
 
 			// For turns > 0, create a new assistant message via callback
 			if (turn > 0 && createAssistantMessage) {
-				await createAssistantMessage();
+				const newMsg = await createAssistantMessage();
+				currentAssistantMessageId = newMsg.id;
 			}
 
 			let turnContent = '';
@@ -613,8 +617,9 @@ class AgenticStore {
 							throw error;
 						}
 					},
-					undefined,
-					signal
+					conversationId,
+					signal,
+					currentAssistantMessageId
 				);
 
 				this.updateSession(conversationId, { streamingToolCall: null });
