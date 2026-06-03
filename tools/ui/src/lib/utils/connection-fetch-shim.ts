@@ -18,6 +18,7 @@ const INTERCEPTED_PATHS = [
 	'/v1/models',
 	'/v1/chat/completions',
 	'/v1/chat/completions/control',
+	'/api/chat/control',
 	'/props',
 	'/slots',
 	'/tools',
@@ -353,7 +354,9 @@ export function installConnectionFetchShim(): void {
 			} else if (matched === '/slots' || matched === '/tools') {
 				// No model targeted, but it is a slots or tools request.
 				// Route to active model only if it is already loaded to avoid waking it.
-				const activeModel = modelsStore.selectedModelName || (modelsStore.models.length > 0 ? modelsStore.models[0].model : '');
+				const activeModel =
+					modelsStore.selectedModelName ||
+					(modelsStore.models.length > 0 ? modelsStore.models[0].model : '');
 				if (activeModel && modelsStore.isModelLoaded(activeModel)) {
 					upstream = `/upstream/${activeModel}`;
 				}
@@ -478,15 +481,26 @@ export function installConnectionFetchShim(): void {
 			}
 
 			case '/api/chat/control': {
-				// Try forwarding; if it fails, mock success
+				// For llama-swap, extract model from body to route to the correct upstream
+				let controlUpstream = upstream;
+				if (!controlUpstream && init?.body && typeof init.body === 'string') {
+					try {
+						const bodyObj = JSON.parse(init.body);
+						const model = bodyObj.model || '';
+						if (model) {
+							controlUpstream = `/upstream/${model}`;
+						}
+					} catch (e) {}
+				}
 
-				const upstreamRes = await tryFetch(`${baseUrl}${upstream}/v1/chat/completions/control`, {
-					...init,
-					headers: connectionHeaders
-				});
-				if (upstreamRes) return upstreamRes;
-
-
+				// Try upstream path (llama-swap), then direct, then mock
+				if (controlUpstream) {
+					const upstreamRes = await tryFetch(
+						`${baseUrl}${controlUpstream}/v1/chat/completions/control`,
+						{ ...init, headers: connectionHeaders }
+					);
+					if (upstreamRes) return upstreamRes;
+				}
 
 				const targetUrl = `${baseUrl}/v1/chat/completions/control`;
 				const res = await tryFetch(targetUrl, { ...init, headers: connectionHeaders });
@@ -540,7 +554,7 @@ export function installConnectionFetchShim(): void {
 							if (bodyObj.tool === 'execute_javascript') {
 								isLocalTool = true;
 							}
-						} catch (e) { }
+						} catch (e) {}
 					}
 
 					if (isLocalTool) {
