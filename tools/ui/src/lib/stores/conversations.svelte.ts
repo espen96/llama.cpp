@@ -46,6 +46,7 @@ import {
 import { ROUTES } from '$lib/constants/routes';
 import { RouterService } from '$lib/services/router.service';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { StorageService } from '$lib/services/storage.service';
 
 export interface ConversationTreeItem {
 	conversation: DatabaseConversation;
@@ -82,11 +83,17 @@ class ConversationsStore {
 	/** Global (non-conversation-specific) reasoning effort default */
 	pendingReasoningEffort = $state<ReasoningEffort>(ConversationsStore.loadReasoningEffortDefault());
 
-	/** Load MCP default overrides from localStorage */
+	rehydrate(): void {
+		this.pendingMcpServerOverrides = ConversationsStore.loadMcpDefaults();
+		this.pendingThinkingEnabled = ConversationsStore.loadThinkingDefaults();
+		this.pendingReasoningEffort = ConversationsStore.loadReasoningEffortDefault();
+	}
+
+	/** Load MCP default overrides from StorageService */
 	private static loadMcpDefaults(): McpServerOverride[] {
-		if (typeof globalThis.localStorage === 'undefined') return [];
+		if (typeof globalThis.window === 'undefined') return [];
 		try {
-			const raw = localStorage.getItem(MCP_DEFAULT_ENABLED_LOCALSTORAGE_KEY);
+			const raw = StorageService.getItem(MCP_DEFAULT_ENABLED_LOCALSTORAGE_KEY);
 			if (!raw) return [];
 			const parsed = JSON.parse(raw);
 			if (!Array.isArray(parsed)) return [];
@@ -98,25 +105,25 @@ class ConversationsStore {
 		}
 	}
 
-	/** Persist MCP default overrides to localStorage */
+	/** Persist MCP default overrides to StorageService */
 	private saveMcpDefaults(): void {
-		if (typeof globalThis.localStorage === 'undefined') return;
+		if (typeof globalThis.window === 'undefined') return;
 		const plain = this.pendingMcpServerOverrides.map((o) => ({
 			serverId: o.serverId,
 			enabled: o.enabled
 		}));
 		if (plain.length > 0) {
-			localStorage.setItem(MCP_DEFAULT_ENABLED_LOCALSTORAGE_KEY, JSON.stringify(plain));
+			StorageService.setItem(MCP_DEFAULT_ENABLED_LOCALSTORAGE_KEY, JSON.stringify(plain));
 		} else {
-			localStorage.removeItem(MCP_DEFAULT_ENABLED_LOCALSTORAGE_KEY);
+			StorageService.removeItem(MCP_DEFAULT_ENABLED_LOCALSTORAGE_KEY);
 		}
 	}
 
-	/** Load thinking-enabled default from localStorage */
+	/** Load thinking-enabled default from StorageService */
 	private static loadThinkingDefaults(): boolean {
-		if (typeof globalThis.localStorage === 'undefined') return false;
+		if (typeof globalThis.window === 'undefined') return false;
 		try {
-			const raw = localStorage.getItem(THINKING_ENABLED_DEFAULT_LOCALSTORAGE_KEY);
+			const raw = StorageService.getItem(THINKING_ENABLED_DEFAULT_LOCALSTORAGE_KEY);
 			if (!raw) return false;
 			const parsed = raw === 'true';
 			return typeof parsed === 'boolean' ? parsed : false;
@@ -125,30 +132,30 @@ class ConversationsStore {
 		}
 	}
 
-	/** Persist thinking-enabled default to localStorage */
+	/** Persist thinking-enabled default to StorageService */
 	private saveThinkingDefaults(): void {
-		if (typeof globalThis.localStorage === 'undefined') return;
-		localStorage.setItem(
+		if (typeof globalThis.window === 'undefined') return;
+		StorageService.setItem(
 			THINKING_ENABLED_DEFAULT_LOCALSTORAGE_KEY,
 			this.pendingThinkingEnabled ? 'true' : 'false'
 		);
 	}
 
-	/** Load reasoning effort default from localStorage */
+	/** Load reasoning effort default from StorageService */
 	private static loadReasoningEffortDefault(): ReasoningEffort {
-		if (typeof globalThis.localStorage === 'undefined') return ReasoningEffort.MEDIUM;
+		if (typeof globalThis.window === 'undefined') return ReasoningEffort.MEDIUM;
 		try {
-			const raw = localStorage.getItem(REASONING_EFFORT_DEFAULT_LOCALSTORAGE_KEY);
+			const raw = StorageService.getItem(REASONING_EFFORT_DEFAULT_LOCALSTORAGE_KEY);
 			return (raw as ReasoningEffort) || ReasoningEffort.MEDIUM;
 		} catch {
 			return ReasoningEffort.MEDIUM;
 		}
 	}
 
-	/** Persist reasoning effort default to localStorage */
+	/** Persist reasoning effort default to StorageService */
 	private saveReasoningEffortDefaults(): void {
-		if (typeof globalThis.localStorage === 'undefined') return;
-		localStorage.setItem(REASONING_EFFORT_DEFAULT_LOCALSTORAGE_KEY, this.pendingReasoningEffort);
+		if (typeof globalThis.window === 'undefined') return;
+		StorageService.setItem(REASONING_EFFORT_DEFAULT_LOCALSTORAGE_KEY, this.pendingReasoningEffort);
 	}
 
 	/** Callback for title update confirmation dialog */

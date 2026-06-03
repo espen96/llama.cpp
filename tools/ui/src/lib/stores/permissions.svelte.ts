@@ -1,21 +1,27 @@
 import { ALWAYS_ALLOWED_TOOLS_LOCALSTORAGE_KEY } from '$lib/constants';
 
 import { SvelteSet } from 'svelte/reactivity';
+import { StorageService } from '$lib/services/storage.service';
 
 class PermissionsStore {
 	private _tools = $state(new SvelteSet<string>());
 
 	constructor() {
+		this.rehydrate();
+	}
+
+	rehydrate(): void {
 		try {
-			const stored = localStorage.getItem(ALWAYS_ALLOWED_TOOLS_LOCALSTORAGE_KEY);
+			const stored = StorageService.getItem(ALWAYS_ALLOWED_TOOLS_LOCALSTORAGE_KEY);
 			if (stored) {
+				this._tools.clear();
 				for (const name of JSON.parse(stored) as string[]) {
 					if (typeof name === 'string') this._tools.add(name);
 				}
 			}
 		} catch (err) {
 			console.error(
-				`Failed to load permissions from localStorage ("${ALWAYS_ALLOWED_TOOLS_LOCALSTORAGE_KEY}"):`,
+				`Failed to load permissions from StorageService ("${ALWAYS_ALLOWED_TOOLS_LOCALSTORAGE_KEY}"):`,
 				err
 			);
 		}
@@ -46,10 +52,10 @@ class PermissionsStore {
 
 	private _persist(): void {
 		try {
-			localStorage.setItem(ALWAYS_ALLOWED_TOOLS_LOCALSTORAGE_KEY, JSON.stringify([...this._tools]));
+			StorageService.setItem(ALWAYS_ALLOWED_TOOLS_LOCALSTORAGE_KEY, JSON.stringify([...this._tools]));
 		} catch (err) {
 			console.error(
-				`Failed to persist to localStorage ("${ALWAYS_ALLOWED_TOOLS_LOCALSTORAGE_KEY}"):`,
+				`Failed to persist to StorageService ("${ALWAYS_ALLOWED_TOOLS_LOCALSTORAGE_KEY}"):`,
 				err
 			);
 		}

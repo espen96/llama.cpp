@@ -16,6 +16,7 @@ import {
 } from '$lib/constants';
 
 import { conversationsStore } from '$lib/stores/conversations.svelte';
+import { StorageService } from '$lib/services/storage.service';
 
 /**
  * modelsStore - Reactive store for model management in both MODEL and ROUTER modes.
@@ -56,6 +57,10 @@ class ModelsStore {
 	private modelLoadingStates = new SvelteMap<string, boolean>();
 
 	favoriteModelIds = $state<Set<string>>(this.loadFavoritesFromStorage());
+
+	rehydrate(): void {
+		this.favoriteModelIds = this.loadFavoritesFromStorage();
+	}
 
 	/**
 	 * Model-specific props cache with TTL.
@@ -747,7 +752,7 @@ class ModelsStore {
 		this.favoriteModelIds = next;
 
 		try {
-			localStorage.setItem(FAVORITE_MODELS_LOCALSTORAGE_KEY, JSON.stringify([...next]));
+			StorageService.setItem(FAVORITE_MODELS_LOCALSTORAGE_KEY, JSON.stringify([...next]));
 		} catch {
 			toast.error('Failed to save favorite models to local storage');
 		}
@@ -755,7 +760,7 @@ class ModelsStore {
 
 	private loadFavoritesFromStorage(): Set<string> {
 		try {
-			const raw = localStorage.getItem(FAVORITE_MODELS_LOCALSTORAGE_KEY);
+			const raw = StorageService.getItem(FAVORITE_MODELS_LOCALSTORAGE_KEY);
 			return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
 		} catch {
 			toast.error('Failed to load favorite models from local storage');

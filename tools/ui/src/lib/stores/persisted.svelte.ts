@@ -1,24 +1,32 @@
 import { browser } from '$app/environment';
+import { StorageService } from '$lib/services/storage.service';
 
 type PersistedValue<T> = {
 	get value(): T;
 	set value(newValue: T);
 };
 
+export const _persistedInstances: Array<() => void> = [];
+
 export function persisted<T>(key: string, initialValue: T): PersistedValue<T> {
 	let value = initialValue;
 
-	if (browser) {
-		try {
-			const stored = localStorage.getItem(key);
+	const load = () => {
+		if (browser) {
+			try {
+				const stored = StorageService.getItem(key);
 
-			if (stored !== null) {
-				value = JSON.parse(stored) as T;
+				if (stored !== null) {
+					value = JSON.parse(stored) as T;
+				}
+			} catch (error) {
+				console.warn(`Failed to load ${key}:`, error);
 			}
-		} catch (error) {
-			console.warn(`Failed to load ${key}:`, error);
 		}
-	}
+	};
+
+	load();
+	_persistedInstances.push(load);
 
 	const persist = (next: T) => {
 		if (!browser) {
@@ -27,11 +35,11 @@ export function persisted<T>(key: string, initialValue: T): PersistedValue<T> {
 
 		try {
 			if (next === null || next === undefined) {
-				localStorage.removeItem(key);
+				StorageService.removeItem(key);
 				return;
 			}
 
-			localStorage.setItem(key, JSON.stringify(next));
+			StorageService.setItem(key, JSON.stringify(next));
 		} catch (error) {
 			console.warn(`Failed to persist ${key}:`, error);
 		}

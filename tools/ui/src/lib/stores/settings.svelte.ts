@@ -50,6 +50,7 @@ import {
 	getConfigValue,
 	setConfigValue
 } from '$lib/utils';
+import { StorageService } from '$lib/services/storage.service';
 
 class SettingsStore {
 	/**
@@ -98,7 +99,7 @@ class SettingsStore {
 	 */
 
 	/**
-	 * Initialize the settings store by loading from localStorage
+	 * Initialize the settings store by loading from StorageService
 	 */
 	initialize() {
 		try {
@@ -112,15 +113,11 @@ class SettingsStore {
 		}
 	}
 
-	/**
-	 * Load configuration from localStorage
-	 * Returns default values for missing keys to prevent breaking changes
-	 */
 	private loadConfig() {
 		if (!browser) return;
 
 		try {
-			const storedConfigRaw = localStorage.getItem(CONFIG_LOCALSTORAGE_KEY);
+			const storedConfigRaw = StorageService.getItem(CONFIG_LOCALSTORAGE_KEY);
 			const savedVal = JSON.parse(storedConfigRaw || '{}');
 
 			// Merge with defaults to prevent breaking changes
@@ -138,7 +135,7 @@ class SettingsStore {
 
 			// Load user overrides
 			const savedOverrides = JSON.parse(
-				localStorage.getItem(USER_OVERRIDES_LOCALSTORAGE_KEY) || '[]'
+				StorageService.getItem(USER_OVERRIDES_LOCALSTORAGE_KEY) || '[]'
 			);
 			this.userOverrides = new Set(savedOverrides);
 		} catch (error) {
@@ -148,19 +145,13 @@ class SettingsStore {
 		}
 	}
 
-	/**
-	 * Migrate the legacy un-namespaced "theme" localStorage key into config.
-	 * Previously theme was stored separately in localStorage("theme") — now it lives
-	 * inside the config object alongside all other settings.
-	 * After migration the legacy key is removed.
-	 */
 	private migrateLegacyTheme() {
 		if (!browser) return;
 
-		const legacyTheme = localStorage.getItem('theme');
+		const legacyTheme = StorageService.getItem('theme');
 		if (legacyTheme) {
 			this.config[SETTINGS_KEYS.THEME] = legacyTheme;
-			localStorage.removeItem('theme');
+			StorageService.removeItem('theme');
 			this.saveConfig();
 			setMode(legacyTheme as ColorMode);
 		}
@@ -229,16 +220,13 @@ class SettingsStore {
 		this.saveConfig();
 	}
 
-	/**
-	 * Save the current configuration to localStorage
-	 */
 	private saveConfig() {
 		if (!browser) return;
 
 		try {
-			localStorage.setItem(CONFIG_LOCALSTORAGE_KEY, JSON.stringify(this.config));
+			StorageService.setItem(CONFIG_LOCALSTORAGE_KEY, JSON.stringify(this.config));
 
-			localStorage.setItem(
+			StorageService.setItem(
 				USER_OVERRIDES_LOCALSTORAGE_KEY,
 				JSON.stringify(Array.from(this.userOverrides))
 			);
@@ -529,7 +517,7 @@ class SettingsStore {
 		// Restore user overrides (derived state — may be stale if server defaults differ)
 		this.userOverrides = new Set(data.userOverrides ?? []);
 
-		// Persist to localStorage
+		// Persist to StorageService
 		this.saveConfig();
 
 		// Apply theme for immediate visual feedback

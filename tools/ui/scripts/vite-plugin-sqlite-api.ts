@@ -3,6 +3,7 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import * as conversations from './sqlite/conversations.js';
 import * as messages from './sqlite/messages.js';
+import * as settings from './sqlite/settings.js';
 
 export function sqliteApiPlugin(): Plugin {
     return {
@@ -151,6 +152,35 @@ export function sqliteApiPlugin(): Plugin {
                 try {
                     const result = conversations.importConversations(req.body.data);
                     res.json(result);
+                } catch (e: any) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
+            // --- Settings ---
+
+            app.get('/settings', (req, res) => {
+                try {
+                    const data = settings.getAllSettings();
+                    res.json(data);
+                } catch (e: any) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
+            app.patch('/settings', (req, res) => {
+                try {
+                    settings.updateSettings(req.body.updates);
+                    res.json({ success: true });
+                } catch (e: any) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
+            app.delete('/settings/:key', (req, res) => {
+                try {
+                    settings.deleteSetting(req.params.key);
+                    res.json({ success: true });
                 } catch (e: any) {
                     res.status(500).json({ error: e.message });
                 }

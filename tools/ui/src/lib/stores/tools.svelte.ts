@@ -10,6 +10,7 @@ import {
 } from '$lib/constants';
 
 import { SvelteSet } from 'svelte/reactivity';
+import { StorageService } from '$lib/services/storage.service';
 
 class ToolsStore {
 	private _builtinTools = $state<OpenAIToolDefinition[]>([]);
@@ -19,24 +20,29 @@ class ToolsStore {
 	private _toolsEndpointUnreachable = $state(false);
 
 	constructor() {
+		this.rehydrate();
+	}
+
+	rehydrate(): void {
 		try {
-			const stored = localStorage.getItem(DISABLED_TOOLS_LOCALSTORAGE_KEY);
+			const stored = StorageService.getItem(DISABLED_TOOLS_LOCALSTORAGE_KEY);
 			if (stored) {
 				const parsed = JSON.parse(stored);
 				if (Array.isArray(parsed)) {
+					this._disabledTools.clear();
 					for (const name of parsed) {
 						if (typeof name === 'string') this._disabledTools.add(name);
 					}
 				}
 			}
 		} catch (err) {
-			console.error('[ToolsStore] Failed to load disabled tools from localStorage:', err);
+			console.error('[ToolsStore] Failed to load disabled tools from StorageService:', err);
 		}
 	}
 
 	private persistDisabledTools(): void {
 		try {
-			localStorage.setItem(
+			StorageService.setItem(
 				DISABLED_TOOLS_LOCALSTORAGE_KEY,
 				JSON.stringify([...this._disabledTools])
 			);

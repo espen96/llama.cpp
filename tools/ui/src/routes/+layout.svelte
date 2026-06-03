@@ -32,12 +32,16 @@
 	import { conversations } from '$lib/stores/conversations.svelte';
 	import { isMobile } from '$lib/stores/viewport.svelte';
 	import { installConnectionFetchShim } from '$lib/utils/connection-fetch-shim';
+	import { StorageService } from '$lib/services/storage.service';
+	import { _persistedInstances } from '$lib/stores/persisted.svelte';
+	import { permissionsStore } from '$lib/stores/permissions.svelte';
 
 	let { children } = $props();
 	let alwaysShowSidebarOnDesktop = $derived(config().alwaysShowSidebarOnDesktop);
 	let isDesktop = $derived(!isMobile.current);
 	let sidebarOpen = $state(false);
 	let mounted = $state(false);
+	let storageInitialized = $state(false);
 	let innerHeight = $state<number | undefined>();
 	let innerWidth = $state(browser ? window.innerWidth : 0);
 
@@ -142,7 +146,21 @@
 		installConnectionFetchShim();
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await StorageService.initialize();
+		
+		// Rehydrate all stores that were instantiated before StorageService was ready
+		settingsStore.initialize();
+		toolsStore.rehydrate();
+		permissionsStore.rehydrate();
+		conversationsStore.rehydrate();
+		modelsStore.rehydrate();
+		
+		for (const rehydrate of _persistedInstances) {
+			rehydrate();
+		}
+		
+		storageInitialized = true;
 		mounted = true;
 	});
 
@@ -263,10 +281,11 @@
 	/>
 
 	<Sidebar.Provider bind:open={sidebarOpen}>
-		<div class="flex h-screen w-full">
-			<Sidebar.Root variant="floating" class="h-full"
-				><SidebarNavigation bind:this={chatSidebar} /></Sidebar.Root
-			>
+		{#if storageInitialized}
+			<div class="flex h-screen w-full">
+				<Sidebar.Root variant="floating" class="h-full"
+					><SidebarNavigation bind:this={chatSidebar} /></Sidebar.Root
+				>
 
 			{#if !(alwaysShowSidebarOnDesktop && isDesktop) && !(panelNav.isSettingsRoute && !isDesktop)}
 				{#if mounted}
@@ -281,23 +300,24 @@
 				{/if}
 			{/if}
 
-			{#if isDesktop && !alwaysShowSidebarOnDesktop}
-				<DesktopIconStrip
-					{sidebarOpen}
-					onSearchClick={() => {
-						if (chatSidebar?.activateSearchMode) {
-							chatSidebar.activateSearchMode();
-						}
+				{#if isDesktop && !alwaysShowSidebarOnDesktop}
+					<DesktopIconStrip
+						{sidebarOpen}
+						onSearchClick={() => {
+							if (chatSidebar?.activateSearchMode) {
+								chatSidebar.activateSearchMode();
+							}
 
-						sidebarOpen = true;
-					}}
-				/>
-			{/if}
+							sidebarOpen = true;
+						}}
+					/>
+				{/if}
 
-			<Sidebar.Inset class="flex flex-1 flex-col overflow-hidden"
-				>{@render children?.()}</Sidebar.Inset
-			>
-		</div>
+				<Sidebar.Inset class="flex flex-1 flex-col overflow-hidden"
+					>{@render children?.()}</Sidebar.Inset
+				>
+			</div>
+		{/if}
 	</Sidebar.Provider>
 </Tooltip.Provider>
 
