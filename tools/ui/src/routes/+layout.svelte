@@ -35,6 +35,7 @@
 	import { StorageService } from '$lib/services/storage.service';
 	import { _persistedInstances } from '$lib/stores/persisted.svelte';
 	import { permissionsStore } from '$lib/stores/permissions.svelte';
+	import { connectionsStore } from '$lib/stores/connections.svelte';
 
 	let { children } = $props();
 	let alwaysShowSidebarOnDesktop = $derived(config().alwaysShowSidebarOnDesktop);
@@ -155,6 +156,7 @@
 		permissionsStore.rehydrate();
 		conversationsStore.rehydrate();
 		modelsStore.rehydrate();
+		connectionsStore.rehydrate();
 		
 		for (const rehydrate of _persistedInstances) {
 			rehydrate();

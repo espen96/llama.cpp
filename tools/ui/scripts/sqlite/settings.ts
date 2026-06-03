@@ -25,7 +25,7 @@ export function updateSettings(updates: Record<string, string>): void {
 
     const transaction = db.transaction(() => {
         for (const [key, value] of Object.entries(updates)) {
-            stmt.run(userId, key, value);
+            stmt.run(userId, key, value, timestamp);
         }
     });
 

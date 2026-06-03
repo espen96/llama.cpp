@@ -1,6 +1,7 @@
 import { browser } from '$app/environment';
 import { uuid } from '$lib/utils/uuid';
 import { STORAGE_APP_NAME } from '$lib/constants';
+import { StorageService } from '$lib/services/storage.service';
 
 /**
  * A remote server connection definition.
@@ -50,9 +51,7 @@ class ConnectionsStore {
 	}
 
 	constructor() {
-		if (browser) {
-			this.load();
-		}
+		this.rehydrate();
 	}
 
 	// ── CRUD ──────────────────────────────────────────────────────────
@@ -88,10 +87,10 @@ class ConnectionsStore {
 
 	// ── Persistence (swap these for SQLite later) ────────────────────
 
-	private load(): void {
+	rehydrate(): void {
 		if (!browser) return;
 		try {
-			const raw = localStorage.getItem(CONNECTIONS_STORAGE_KEY);
+			const raw = StorageService.getItem(CONNECTIONS_STORAGE_KEY);
 			this.connections = raw
 				? (JSON.parse(raw) as any[]).map((c) => ({
 						id: c.id,
@@ -103,7 +102,7 @@ class ConnectionsStore {
 					}))
 				: [];
 
-			const activeId = localStorage.getItem(ACTIVE_CONNECTION_STORAGE_KEY);
+			const activeId = StorageService.getItem(ACTIVE_CONNECTION_STORAGE_KEY);
 			this.activeConnectionId = activeId || null;
 
 			// Validate: active id must reference an existing enabled connection
@@ -123,11 +122,11 @@ class ConnectionsStore {
 	private save(): void {
 		if (!browser) return;
 		try {
-			localStorage.setItem(CONNECTIONS_STORAGE_KEY, JSON.stringify(this.connections));
+			StorageService.setItem(CONNECTIONS_STORAGE_KEY, JSON.stringify(this.connections));
 			if (this.activeConnectionId) {
-				localStorage.setItem(ACTIVE_CONNECTION_STORAGE_KEY, this.activeConnectionId);
+				StorageService.setItem(ACTIVE_CONNECTION_STORAGE_KEY, this.activeConnectionId);
 			} else {
-				localStorage.removeItem(ACTIVE_CONNECTION_STORAGE_KEY);
+				StorageService.removeItem(ACTIVE_CONNECTION_STORAGE_KEY);
 			}
 		} catch (error) {
 			console.error('Failed to save connections to storage:', error);

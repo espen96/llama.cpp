@@ -22,7 +22,7 @@ export class StorageService {
                 for (let i = 0; i < localStorage.length; i++) {
                     const key = localStorage.key(i);
                     // Only migrate keys used by our app
-                    if (key && (key.startsWith('llama_ui_') || key === 'theme')) {
+                    if (key && (key.startsWith('LlamaUi.') || key.startsWith('LlamaCppWebui.') || key.startsWith('llama_ui_') || key === 'theme')) {
                         toMigrate[key] = localStorage.getItem(key) || '';
                     }
                 }
