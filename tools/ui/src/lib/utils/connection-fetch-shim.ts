@@ -1,5 +1,7 @@
 import { connectionsStore } from '$lib/stores/connections.svelte';
+import { modelsStore } from '$lib/stores/models.svelte';
 import { ServerRole } from '$lib/enums';
+import { buildProxiedUrl } from './cors-proxy';
 
 /**
  * Connection Fetch Shim
@@ -327,11 +329,35 @@ export function installConnectionFetchShim(): void {
 		console.debug(`[Shim] Intercepting ${matched} -> ${connection.url}`);
 
 		const baseUrl = connection.url.replace(/\/+$/, '');
-		const upstream = connection.upstreamPath?.replace(/\/+$/, '') || '';
 		const connectionHeaders = buildConnectionHeaders(connection.apiKey, init?.headers);
 
 		// Preserve query string from original path
 		const queryString = path.includes('?') ? path.slice(path.indexOf('?')) : '';
+
+		let upstream = '';
+		if (connection.llamaSwap) {
+			let modelName = '';
+			if (queryString) {
+				try {
+					const urlParams = new URLSearchParams(queryString);
+					modelName = urlParams.get('model') || '';
+				} catch (e) {
+					console.warn('[Shim] Failed to parse query string for model:', e);
+				}
+			}
+
+			if (modelName) {
+				// Model is explicitly targeted in query params (e.g., props or slots check)
+				upstream = `/upstream/${modelName}`;
+			} else if (matched === '/slots' || matched === '/tools') {
+				// No model targeted, but it is a slots or tools request.
+				// Route to active model only if it is already loaded to avoid waking it.
+				const activeModel = modelsStore.selectedModelName || (modelsStore.models.length > 0 ? modelsStore.models[0].model : '');
+				if (activeModel && modelsStore.isModelLoaded(activeModel)) {
+					upstream = `/upstream/${activeModel}`;
+				}
+			}
+		}
 
 		switch (matched) {
 			case '/v1/models': {
@@ -347,6 +373,25 @@ export function installConnectionFetchShim(): void {
 							const data = await response.json();
 
 							if (data && Array.isArray(data.data)) {
+								let runningModels: string[] = [];
+								if (connection.llamaSwap) {
+									try {
+										const targetRunningUrl = `${baseUrl}/running`;
+										const proxiedUrl = buildProxiedUrl(targetRunningUrl).toString();
+										const runningRes = await originalFetch(proxiedUrl, {
+											headers: connectionHeaders
+										});
+										if (runningRes && runningRes.ok) {
+											const runningData = await runningRes.json();
+											if (runningData && Array.isArray(runningData.running)) {
+												runningModels = runningData.running.map((r: any) => r.model);
+											}
+										}
+									} catch (e) {
+										console.warn('[Shim] Failed to fetch running models:', e);
+									}
+								}
+
 								data.data = data.data
 									.filter((m: any) => {
 										// Filter out models that Open WebUI explicitly marks as hidden
@@ -354,13 +399,21 @@ export function installConnectionFetchShim(): void {
 										return true;
 									})
 									.map((m: any) => {
+										let status: any = undefined;
+										if (connection.llamaSwap) {
+											const isLoaded = runningModels.includes(m.id);
+											status = {
+												value: isLoaded ? 'loaded' : 'unloaded'
+											};
+										}
 										// Map to standard OpenAI format to drop Open WebUI extras
 										return {
 											id: m.id,
 											name: m.name || m.id,
 											object: 'model',
 											created: m.created || Date.now(),
-											owned_by: m.owned_by || 'openai'
+											owned_by: m.owned_by || 'openai',
+											status
 										};
 									});
 
@@ -549,9 +602,32 @@ export function installConnectionFetchShim(): void {
 				}
 			}
 
-			case '/models/load':
-			case '/models/unload': {
+			case '/models/load': {
 				// Try forwarding; if it fails, mock success
+				const targetUrl = `${baseUrl}${matched}`;
+				const res = await tryFetch(targetUrl, { ...init, headers: connectionHeaders });
+				return res ?? buildMockResponse({ success: true });
+			}
+
+			case '/models/unload': {
+				if (connection.llamaSwap && init?.body && typeof init.body === 'string') {
+					try {
+						const bodyObj = JSON.parse(init.body);
+						const modelId = bodyObj.model;
+						if (modelId) {
+							const targetUrl = `${baseUrl}/api/models/unload/${encodeURIComponent(modelId)}`;
+							const res = await tryFetch(targetUrl, {
+								...init,
+								method: 'POST',
+								headers: connectionHeaders,
+								body: undefined
+							});
+							if (res) return res;
+						}
+					} catch (e) {
+						console.warn('[Shim] Failed to parse unload model body:', e);
+					}
+				}
 				const targetUrl = `${baseUrl}${matched}`;
 				const res = await tryFetch(targetUrl, { ...init, headers: connectionHeaders });
 				return res ?? buildMockResponse({ success: true });

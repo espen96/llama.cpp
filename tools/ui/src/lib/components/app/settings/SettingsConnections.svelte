@@ -20,14 +20,14 @@
 	let formName = $state('');
 	let formUrl = $state('');
 	let formApiKey = $state('');
-	let formUpstreamPath = $state('');
+	let formLlamaSwap = $state(false);
 	let showApiKey = $state(false);
 
 	function resetForm() {
 		formName = '';
 		formUrl = '';
 		formApiKey = '';
-		formUpstreamPath = '';
+		formLlamaSwap = false;
 		showApiKey = false;
 		isAdding = false;
 		editingId = null;
@@ -42,7 +42,7 @@
 		formName = conn.name;
 		formUrl = conn.url;
 		formApiKey = conn.apiKey;
-		formUpstreamPath = conn.upstreamPath;
+		formLlamaSwap = conn.llamaSwap || false;
 		showApiKey = false;
 		editingId = conn.id;
 		isAdding = false;
@@ -62,7 +62,7 @@
 				name: trimmedName,
 				url: trimmedUrl,
 				apiKey: formApiKey.trim(),
-				upstreamPath: formUpstreamPath.trim()
+				llamaSwap: formLlamaSwap
 			});
 			toast.success(`Updated connection "${trimmedName}"`);
 		} else {
@@ -70,7 +70,7 @@
 				name: trimmedName,
 				url: trimmedUrl,
 				apiKey: formApiKey.trim(),
-				upstreamPath: formUpstreamPath.trim(),
+				llamaSwap: formLlamaSwap,
 				enabled: true
 			});
 			toast.success(`Added connection "${trimmedName}"`);
@@ -162,8 +162,8 @@
 						<div class="font-medium">{conn.name}</div>
 						<div class="truncate text-sm text-muted-foreground">
 							{conn.url}
-							{#if conn.upstreamPath}
-								<span class="opacity-60"> · upstream: {conn.upstreamPath}</span>
+							{#if conn.llamaSwap}
+								<span class="opacity-60"> · llama-swap</span>
 							{/if}
 						</div>
 					</div>
@@ -265,22 +265,21 @@
 					</div>
 				</div>
 
-				<div>
-					<label for="conn-upstream" class="mb-1 block text-sm font-medium">
-						Upstream Path
-						<span class="font-normal text-muted-foreground">(optional)</span>
-					</label>
+				<div class="flex items-start gap-2 pt-1">
 					<input
-						id="conn-upstream"
-						type="text"
-						bind:value={formUpstreamPath}
-						placeholder="/upstream/my-model"
-						class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+						id="conn-llama-swap"
+						type="checkbox"
+						bind:checked={formLlamaSwap}
+						class="mt-1 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
 					/>
-					<p class="mt-1 text-xs text-muted-foreground">
-						For llama-swap proxies. Gives access to props, slots, tools on the upstream llama.cpp
-						backend.
-					</p>
+					<div>
+						<label for="conn-llama-swap" class="text-sm font-medium select-none cursor-pointer">
+							Llama-swap proxy
+						</label>
+						<p class="text-xs text-muted-foreground">
+							Enable if using llama-swap. Automatically routes props, slots, and tools requests via /upstream/{`{model_id}`} using the selected model.
+						</p>
+					</div>
 				</div>
 			</div>
 

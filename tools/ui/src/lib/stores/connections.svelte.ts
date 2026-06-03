@@ -18,12 +18,11 @@ export interface ServerConnection {
 	/** Optional API key for this connection */
 	apiKey: string;
 	/**
-	 * Optional upstream path prefix for llama-swap style proxies.
-	 * When set, the shim tries `{url}{upstreamPath}/props` etc.
-	 * before falling back to mocks.
-	 * Example: "/upstream/my-model"
+	 * Whether this connection is a llama-swap proxy.
+	 * When true, requests to /props, /slots, and /tools are dynamically
+	 * prefixed with `/upstream/{model_id}`.
 	 */
-	upstreamPath: string;
+	llamaSwap: boolean;
 	/** Whether this connection is available for selection */
 	enabled: boolean;
 }
@@ -93,7 +92,16 @@ class ConnectionsStore {
 		if (!browser) return;
 		try {
 			const raw = localStorage.getItem(CONNECTIONS_STORAGE_KEY);
-			this.connections = raw ? (JSON.parse(raw) as ServerConnection[]) : [];
+			this.connections = raw
+				? (JSON.parse(raw) as any[]).map((c) => ({
+						id: c.id,
+						name: c.name,
+						url: c.url,
+						apiKey: c.apiKey,
+						llamaSwap: c.llamaSwap ?? !!c.upstreamPath,
+						enabled: c.enabled
+					}))
+				: [];
 
 			const activeId = localStorage.getItem(ACTIVE_CONNECTION_STORAGE_KEY);
 			this.activeConnectionId = activeId || null;
