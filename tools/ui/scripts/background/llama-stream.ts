@@ -648,8 +648,16 @@ function readToolSettings(settings: Record<string, string>): ToolSettings {
         const configRaw = settings['LlamaUi.config'];
         if (configRaw) {
             const cfg = JSON.parse(configRaw);
-            if (Array.isArray(cfg.mcpServers)) {
-                mcpServers = cfg.mcpServers as McpServerRaw[];
+            if (cfg.mcpServers) {
+                let parsedMcpServers = cfg.mcpServers;
+                if (typeof parsedMcpServers === 'string') {
+                    try {
+                        parsedMcpServers = JSON.parse(parsedMcpServers);
+                    } catch {}
+                }
+                if (Array.isArray(parsedMcpServers)) {
+                    mcpServers = parsedMcpServers as McpServerRaw[];
+                }
             }
         }
     } catch {}
@@ -669,8 +677,8 @@ function buildEnabledMcpServers(
         const id = (s.id && typeof s.id === 'string' && s.id.trim())
             ? s.id.trim()
             : `mcp-server-${idx + 1}`;
-        // Per-chat override controls enablement; fall back to false (not enabled by default)
-        const enabled = overrideMap.has(id) ? overrideMap.get(id)! : false;
+        // Per-chat override controls enablement; fall back to global enabled status
+        const enabled = overrideMap.has(id) ? overrideMap.get(id)! : s.enabled;
         if (!enabled || !s.url?.trim()) continue;
 
         let headers: Record<string, string> | undefined;

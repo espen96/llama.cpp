@@ -198,7 +198,7 @@ class MCPStore {
 		perChatOverrides?: McpServerOverride[]
 	): boolean {
 		const override = perChatOverrides?.find((o) => o.serverId === server.id);
-		return override?.enabled ?? false;
+		return override?.enabled ?? server.enabled;
 	}
 
 	/**

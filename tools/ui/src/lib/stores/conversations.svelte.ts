@@ -24,7 +24,7 @@ import { toast } from 'svelte-sonner';
 import { DatabaseService } from '$lib/services/database.service';
 import { MigrationService } from '$lib/services/migration.service';
 import { config } from '$lib/stores/settings.svelte';
-import { filterByLeafNodeId, findLeafNode, generateConversationTitle } from '$lib/utils';
+import { filterByLeafNodeId, findLeafNode, generateConversationTitle, parseMcpServerSettings } from '$lib/utils';
 import type { McpServerOverride } from '$lib/types/database';
 import { MessageRole, HtmlInputType, FileExtensionText, ReasoningEffort } from '$lib/enums';
 import {
@@ -662,7 +662,12 @@ class ConversationsStore {
 	 */
 	isMcpServerEnabledForChat(serverId: string): boolean {
 		const override = this.getMcpServerOverride(serverId);
-		return override?.enabled ?? false;
+		if (override !== undefined) {
+			return override.enabled;
+		}
+		const servers = parseMcpServerSettings(config().mcpServers);
+		const server = servers.find((s) => s.id === serverId);
+		return server?.enabled ?? false;
 	}
 
 	/**

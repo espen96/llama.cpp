@@ -22,6 +22,7 @@
 	import { createAutoScrollController } from '$lib/hooks/use-auto-scroll.svelte';
 	import { useKeyboardShortcuts } from '$lib/hooks/use-keyboard-shortcuts.svelte';
 	import { isMobile } from '$lib/stores/viewport.svelte';
+	import { mcpStore } from '$lib/stores/mcp.svelte';
 	import {
 		chatStore,
 		errorDialog,
@@ -161,6 +162,13 @@
 					modelPropsVersion++;
 				});
 			}
+		}
+	});
+
+	$effect(() => {
+		const conversation = activeConversation();
+		if (conversation) {
+			mcpStore.ensureInitialized(conversation.mcpServerOverrides).catch(console.error);
 		}
 	});
 

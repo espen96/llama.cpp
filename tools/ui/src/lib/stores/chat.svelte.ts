@@ -1071,6 +1071,8 @@ class ChatStore {
 		// Build the fully-normalized OAI body on the frontend (attachment conversion etc.)
 		// then hand it to the Node middle tier. The backend fetches the LLM and writes
 		// to SQLite regardless of whether this SSE connection stays open.
+		await mcpStore.ensureInitialized(perChatOverrides).catch(console.error);
+
 		const apiOptions = {
 			...this.getApiOptions(),
 			...(effectiveModel ? { model: effectiveModel } : {}),
