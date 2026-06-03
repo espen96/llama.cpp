@@ -198,16 +198,20 @@ export function parseToolResultWithImages(
 /**
  * Safely parse the toolCalls JSON string from a DatabaseMessage.
  */
-function parseToolCalls(toolCallsJson?: string): ApiChatCompletionToolCall[] {
+function parseToolCalls(toolCallsJson?: string | ApiChatCompletionToolCall[] | unknown): ApiChatCompletionToolCall[] {
 	if (!toolCallsJson) return [];
+	if (Array.isArray(toolCallsJson)) return toolCallsJson;
 
-	try {
-		const parsed = JSON.parse(toolCallsJson);
-
-		return Array.isArray(parsed) ? parsed : [];
-	} catch {
-		return [];
+	if (typeof toolCallsJson === 'string') {
+		try {
+			const parsed = JSON.parse(toolCallsJson);
+			return Array.isArray(parsed) ? parsed : [];
+		} catch {
+			return [];
+		}
 	}
+
+	return [];
 }
 
 /**
