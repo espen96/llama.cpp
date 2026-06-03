@@ -126,16 +126,32 @@ export class ChatService {
 	): Promise<Record<string, unknown>> {
 		const {
 			tools,
-			temperature, max_tokens,
-			dynatemp_range, dynatemp_exponent,
-			top_k, top_p, min_p,
-			xtc_probability, xtc_threshold, typ_p,
-			repeat_last_n, repeat_penalty,
-			presence_penalty, frequency_penalty,
-			dry_multiplier, dry_base, dry_allowed_length, dry_penalty_last_n,
-			samplers, backend_sampling, custom, timings_per_token,
-			disableReasoningParsing, excludeReasoningFromContext,
-			enableThinking, reasoningEffort
+			temperature,
+			max_tokens,
+			dynatemp_range,
+			dynatemp_exponent,
+			top_k,
+			top_p,
+			min_p,
+			xtc_probability,
+			xtc_threshold,
+			typ_p,
+			repeat_last_n,
+			repeat_penalty,
+			presence_penalty,
+			frequency_penalty,
+			dry_multiplier,
+			dry_base,
+			dry_allowed_length,
+			dry_penalty_last_n,
+			samplers,
+			backend_sampling,
+			custom,
+			timings_per_token,
+			disableReasoningParsing,
+			excludeReasoningFromContext,
+			enableThinking,
+			reasoningEffort
 		} = options;
 
 		const normalizedMessages: ApiChatMessageData[] = (
@@ -202,7 +218,8 @@ export class ChatService {
 		if (reasoningBudgetTokens >= 0) requestBody.thinking_budget_tokens = reasoningBudgetTokens;
 
 		if (temperature !== undefined) requestBody.temperature = temperature;
-		if (max_tokens !== undefined) requestBody.max_tokens = max_tokens !== null && max_tokens !== 0 ? max_tokens : -1;
+		if (max_tokens !== undefined)
+			requestBody.max_tokens = max_tokens !== null && max_tokens !== 0 ? max_tokens : -1;
 		if (dynatemp_range !== undefined) requestBody.dynatemp_range = dynatemp_range;
 		if (dynatemp_exponent !== undefined) requestBody.dynatemp_exponent = dynatemp_exponent;
 		if (top_k !== undefined) requestBody.top_k = top_k;
@@ -230,7 +247,9 @@ export class ChatService {
 		if (custom) {
 			try {
 				Object.assign(requestBody, typeof custom === 'string' ? JSON.parse(custom) : custom);
-			} catch { /* ignore bad custom JSON */ }
+			} catch {
+				/* ignore bad custom JSON */
+			}
 		}
 
 		return requestBody;
@@ -293,7 +312,9 @@ export class ChatService {
 		if (conversationId && assistantMessageId) {
 			return new Promise<string | void>(async (resolve, reject) => {
 				const abortController = new AbortController();
-				const combinedSignal = signal ? mergeSignals(signal, abortController.signal) : abortController.signal;
+				const combinedSignal = signal
+					? mergeSignals(signal, abortController.signal)
+					: abortController.signal;
 
 				let eventSource: EventSource | null = null;
 				let taskId: string | null = null;
@@ -301,24 +322,32 @@ export class ChatService {
 				let accumulatedReasoning = '';
 				let lastTimings: ChatMessageTimings | undefined;
 
-				const pendingToolCalls: Record<number, {
-					id: string;
-					type: string;
-					function: { name: string; arguments: string };
-				}> = {};
+				const pendingToolCalls: Record<
+					number,
+					{
+						id: string;
+						type: string;
+						function: { name: string; arguments: string };
+					}
+				> = {};
 
 				const finalize = () => {
 					const toolCallsList = Object.values(pendingToolCalls);
 					const toolCallsStr = toolCallsList.length > 0 ? JSON.stringify(toolCallsList) : undefined;
 					if (onComplete) {
-						onComplete(accumulatedContent, accumulatedReasoning || undefined, lastTimings, toolCallsStr);
+						onComplete(
+							accumulatedContent,
+							accumulatedReasoning || undefined,
+							lastTimings,
+							toolCallsStr
+						);
 					}
 					resolve(accumulatedContent);
 				};
 
 				try {
 					const requestBody = await ChatService.buildOaiRequestBody(messages, options);
-					
+
 					const resp = await fetch('/api/chat', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
@@ -398,11 +427,14 @@ export class ChatService {
 									if (onToolCallChunk) onToolCallChunk(JSON.stringify(delta.tool_calls));
 								}
 
-								if (parsed.usage && onTimings) {
-									const u = parsed.usage;
+								if (parsed.timings && onTimings) {
+									const t = parsed.timings;
 									lastTimings = {
-										prompt_n: u.prompt_tokens ?? 0,
-										predicted_n: u.completion_tokens ?? 0
+										prompt_n: t.prompt_n ?? 0,
+										prompt_ms: t.prompt_ms,
+										predicted_n: t.predicted_n ?? 0,
+										predicted_ms: t.predicted_ms,
+										cache_n: t.cache_n ?? 0
 									};
 									onTimings(lastTimings);
 								}
@@ -420,7 +452,11 @@ export class ChatService {
 							const msg = (event as MessageEvent).data;
 							eventSource?.close();
 							let errorObj: unknown;
-							try { errorObj = JSON.parse(msg); } catch { errorObj = { message: msg }; }
+							try {
+								errorObj = JSON.parse(msg);
+							} catch {
+								errorObj = { message: msg };
+							}
 							const err = new Error((errorObj as { message?: string })?.message || 'Stream error');
 							if (onError) onError(err);
 							reject(err);
@@ -439,9 +475,11 @@ export class ChatService {
 					} else {
 						resolve();
 					}
-
 				} catch (err: unknown) {
-					if (err instanceof Error && (err.name === 'AbortError' || err.message.includes('aborted'))) {
+					if (
+						err instanceof Error &&
+						(err.name === 'AbortError' || err.message.includes('aborted'))
+					) {
 						resolve();
 					} else {
 						const error = err instanceof Error ? err : new Error(String(err));
