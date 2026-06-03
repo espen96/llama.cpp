@@ -22,3 +22,9 @@ export const API_TOOLS = {
 
 /** CORS proxy endpoint path */
 export const CORS_PROXY_ENDPOINT = '/cors-proxy';
+
+/** MCP server-side proxy endpoints */
+export const API_MCP = {
+	EXECUTE: '/api/mcp/execute',
+	HEALTH: '/api/mcp/health'
+};

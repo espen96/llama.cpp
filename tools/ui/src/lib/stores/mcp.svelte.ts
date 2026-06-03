@@ -1134,16 +1134,63 @@ class MCPStore {
 		return MCPService.getPrompt(connection, promptName, args);
 	}
 
+	private getToolServerUrl(toolName: string): string | undefined {
+		const serverId = this.toolsIndex.get(toolName);
+		if (!serverId) return undefined;
+		return this.serverConfigs.get(serverId)?.url;
+	}
+
+	private async executeToolViaProxy(
+		toolName: string,
+		args: Record<string, unknown>,
+		signal?: AbortSignal
+	): Promise<ToolExecutionResult | null> {
+		const serverId = this.toolsIndex.get(toolName);
+		if (!serverId) return null;
+		const config = this.serverConfigs.get(serverId);
+		if (!config?.url) return null;
+
+		const { API_MCP } = await import('$lib/constants');
+		const { getAuthHeaders } = await import('$lib/utils/api-headers');
+
+		try {
+			const res = await fetch(API_MCP.EXECUTE, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					url: config.url,
+					toolName,
+					arguments: args,
+					headers: config.headers
+				}),
+				signal
+			});
+
+			if (!res.ok) return null;
+
+			const data = await res.json();
+			if (data.error) {
+				return { content: data.error, isError: true };
+			}
+			return { content: data.content || '', isError: data.isError ?? false };
+		} catch {
+			return null;
+		}
+	}
+
 	async executeTool(toolCall: MCPToolCall, signal?: AbortSignal): Promise<ToolExecutionResult> {
 		const toolName = toolCall.function.name;
 
 		const serverName = this.toolsIndex.get(toolName);
 		if (!serverName) throw new Error(`Unknown tool: ${toolName}`);
 
+		const args = this.parseToolArguments(toolCall.function.arguments);
+
+		const proxyResult = await this.executeToolViaProxy(toolName, args, signal);
+		if (proxyResult) return proxyResult;
+
 		const connection = this.connections.get(serverName);
 		if (!connection) throw new Error(`Server "${serverName}" is not connected`);
-
-		const args = this.parseToolArguments(toolCall.function.arguments);
 
 		try {
 			return await MCPService.callTool(connection, { name: toolName, arguments: args }, signal);
@@ -1169,6 +1216,10 @@ class MCPStore {
 	): Promise<ToolExecutionResult> {
 		const serverName = this.toolsIndex.get(toolName);
 		if (!serverName) throw new Error(`Unknown tool: ${toolName}`);
+
+		const proxyResult = await this.executeToolViaProxy(toolName, args, signal);
+		if (proxyResult) return proxyResult;
+
 		const connection = this.connections.get(serverName);
 		if (!connection) throw new Error(`Server "${serverName}" is not connected`);
 

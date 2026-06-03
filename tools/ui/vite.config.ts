@@ -9,6 +9,7 @@ import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { llamaCppBuildPlugin } from './scripts/vite-plugin-llama-cpp-build';
 import { corsProxyPlugin } from './scripts/vite-plugin-cors-proxy';
 import { localToolsPlugin } from './scripts/vite-plugin-local-tools';
+import { mcpProxyPlugin } from './scripts/vite-plugin-mcp-proxy';
 import { sqliteApiPlugin } from './scripts/vite-plugin-sqlite-api';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -35,7 +36,8 @@ export default defineConfig({
 		sqliteApiPlugin(),
 		llamaCppBuildPlugin(),
 		corsProxyPlugin(),
-		localToolsPlugin()
+		localToolsPlugin(),
+		mcpProxyPlugin()
 	],
 
 	test: {
@@ -91,7 +93,8 @@ export default defineConfig({
 			'/v1': SERVER_ORIGIN,
 			'/props': SERVER_ORIGIN,
 			'/models': SERVER_ORIGIN,
-			'/slots': SERVER_ORIGIN
+			'/slots': SERVER_ORIGIN,
+			'/tools': SERVER_ORIGIN
 		},
 		headers: {
 			'Cross-Origin-Embedder-Policy': 'require-corp',
