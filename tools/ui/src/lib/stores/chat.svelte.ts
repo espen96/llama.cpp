@@ -1087,17 +1087,41 @@ class ChatStore {
 
 	async stopGeneration(): Promise<void> {
 		const activeConv = conversationsStore.activeConversation;
+		console.log(`attempting to abort for: ${activeConv?.id}`);
+
 		if (!activeConv) return;
 		await this.stopGenerationForChat(activeConv.id);
 	}
 	async stopGenerationForChat(convId: string): Promise<void> {
-		const taskId = this.chatActiveTaskIds.get(convId);
+		let taskId = this.chatActiveTaskIds.get(convId);
+		console.log(`attempting to abort: ${taskId}`);
+
+		// 🔄 Fallback: Handle race condition where "Stop" is clicked before 
+		// the backend SSE stream delivers the taskId via onTaskId.
+		if (!taskId) {
+			try {
+				const activeTasks = await getActiveTasks();
+				const task = activeTasks.find(
+					(t) => t.conversationId === convId && t.status === 'streaming'
+				);
+				if (task) {
+					taskId = task.taskId;
+					this.chatActiveTaskIds.set(convId, taskId);
+					console.log(`fallback abort found: ${taskId}`);
+				}
+			} catch (e) {
+				console.warn('Failed to fetch active tasks for stop fallback:', e);
+			}
+		}
+
 		if (taskId) {
+			console.log(`found: ${taskId}`);
 			abortTask(taskId).catch((err) => {
 				console.error(`Failed to abort task ${taskId} on backend:`, err);
 			});
 			this.chatActiveTaskIds.delete(convId);
 		}
+
 		await this.savePartialResponseIfNeeded(convId);
 		this.setStreamingActive(false);
 		this.abortRequest(convId);
@@ -1106,6 +1130,7 @@ class ChatStore {
 		this.setProcessingState(convId, null);
 		this.clearPendingMessage(convId);
 	}
+
 
 	private async generateTitleWithLLM(
 		userContent: string,
