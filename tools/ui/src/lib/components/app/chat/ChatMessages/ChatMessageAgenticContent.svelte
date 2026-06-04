@@ -71,7 +71,7 @@
 		highlightTurns = false
 	}: Props = $props();
 
-	let expandedStates: Record<string, boolean> = $state({});
+	let expandedStates: Record<number, boolean> = $state({});
 
 	const showToolCallInProgress = $derived(config().showToolCallInProgress as boolean);
 	const showThoughtInProgress = $derived(config().showThoughtInProgress as boolean);
@@ -239,21 +239,20 @@
 
 	let chainExpandedStates: Record<string, boolean> = $state({});
 
-	function isChainExpanded(entry: ChainEntry, entryKey: string, isLastEntry: boolean): boolean {
+	function isChainExpanded(entry: ChainEntry, entryKey: string): boolean {
 		if (chainExpandedStates[entryKey] !== undefined) {
 			return chainExpandedStates[entryKey];
 		}
 		// Auto-expand during streaming if chain has pending sections
-		// or if it's the last entry (the LLM is working between tools)
-		if (isStreaming && (chainHasPending(entry.sections) || isLastEntry)) {
+		if (isStreaming && chainHasPending(entry.sections)) {
 			return true;
 		}
 		return false;
 	}
 
-	function toggleChainExpanded(entry: ChainEntry, entryKey: string, isLastEntry: boolean) {
-		const currentState = isChainExpanded(entry, entryKey, isLastEntry);
-		chainExpandedStates[entryKey] = !currentState;
+	function toggleChainExpanded(entryKey: string) {
+		const current = chainExpandedStates[entryKey];
+		chainExpandedStates[entryKey] = current === undefined ? true : !current;
 	}
 
 	// Group flat sections into agentic turns
@@ -304,44 +303,18 @@
 		return false;
 	}
 
-	/**
-	 * Stable key for a section — survives index shifts when new sections appear during streaming.
-	 * Uses toolName for tool sections, type+content-prefix for others.
-	 */
-	function getSectionKey(section: AgenticSection, index: number): string {
-		if (
-			section.type === AgenticSectionType.TOOL_CALL ||
-			section.type === AgenticSectionType.TOOL_CALL_PENDING ||
-			section.type === AgenticSectionType.TOOL_CALL_STREAMING
-		) {
-			// Use toolName + truncated args for stability (tool calls are unique per turn)
-			return `tc:${section.toolName ?? ''}:${(section.toolArgs ?? '').slice(0, 32)}`;
-		}
-		if (
-			section.type === AgenticSectionType.REASONING ||
-			section.type === AgenticSectionType.REASONING_PENDING
-		) {
-			// Reasoning blocks: use type + first 32 chars of content
-			return `r:${section.content.slice(0, 32)}`;
-		}
-		// TEXT sections — fall back to index (text order shouldn't shift)
-		return `txt:${index}`;
-	}
-
-	function isExpanded(section: AgenticSection, index: number): boolean {
-		const key = getSectionKey(section, index);
-		if (expandedStates[key] !== undefined) {
-			return expandedStates[key];
+	function isExpanded(index: number, section: AgenticSection): boolean {
+		if (expandedStates[index] !== undefined) {
+			return expandedStates[index];
 		}
 
 		return getDefaultExpanded(section);
 	}
 
-	function toggleExpanded(section: AgenticSection, index: number) {
-		const key = getSectionKey(section, index);
-		const currentState = isExpanded(section, index);
+	function toggleExpanded(index: number, section: AgenticSection) {
+		const currentState = isExpanded(index, section);
 
-		expandedStates[key] = !currentState;
+		expandedStates[index] = !currentState;
 	}
 
 	function buildTurnAgenticTimings(stats: ChatMessageAgenticTurnStats): ChatMessageAgenticTimings {
@@ -365,14 +338,14 @@
 		{@const streamingIconClass = isStreaming ? 'h-4 w-4 animate-spin' : 'h-4 w-4'}
 
 		<CollapsibleContentBlock
-			open={isExpanded(section, index)}
+			open={isExpanded(index, section)}
 			class="my-2"
 			icon={streamingIcon}
 			iconClass={streamingIconClass}
 			title={section.toolName || 'Tool call'}
 			subtitle={isStreaming ? '' : 'incomplete'}
 			{isStreaming}
-			onToggle={() => toggleExpanded(section, index)}
+			onToggle={() => toggleExpanded(index, section)}
 		>
 			<div class="pt-3">
 				<div class="my-3 flex items-center gap-2 text-xs text-muted-foreground">
@@ -408,14 +381,14 @@
 		{@const toolIconClass = isPending ? 'h-4 w-4 animate-spin' : 'h-4 w-4'}
 
 		<CollapsibleContentBlock
-			open={isExpanded(section, index)}
+			open={isExpanded(index, section)}
 			class="my-2"
 			icon={toolIcon}
 			iconClass={toolIconClass}
 			title={section.toolName || ''}
 			subtitle={isPending ? 'executing...' : undefined}
 			isStreaming={isPending}
-			onToggle={() => toggleExpanded(section, index)}
+			onToggle={() => toggleExpanded(index, section)}
 		>
 			{#if section.toolArgs && section.toolArgs !== '{}'}
 				<div class="pt-3">
@@ -465,11 +438,11 @@
 		</CollapsibleContentBlock>
 	{:else if section.type === AgenticSectionType.REASONING}
 		<CollapsibleContentBlock
-			open={isExpanded(section, index)}
+			open={isExpanded(index, section)}
 			class="my-2"
 			icon={Brain}
 			title="Reasoning"
-			onToggle={() => toggleExpanded(section, index)}
+			onToggle={() => toggleExpanded(index, section)}
 		>
 			<div class="pt-3">
 				<div class="text-xs leading-relaxed break-words whitespace-pre-wrap">
@@ -482,13 +455,13 @@
 		{@const reasoningSubtitle = isStreaming ? '' : 'incomplete'}
 
 		<CollapsibleContentBlock
-			open={isExpanded(section, index)}
+			open={isExpanded(index, section)}
 			class="my-2"
 			icon={Brain}
 			title={reasoningTitle}
 			subtitle={reasoningSubtitle}
 			{isStreaming}
-			onToggle={() => toggleExpanded(section, index)}
+			onToggle={() => toggleExpanded(index, section)}
 		>
 			<div class="pt-3">
 				<div class="text-xs leading-relaxed break-words whitespace-pre-wrap">
@@ -529,15 +502,14 @@
 		{#each displayEntries as entry, entryIndex (getEntryKey(entry))}
 			{#if entry.kind === 'chain'}
 				{@const entryKey = getEntryKey(entry)}
-				{@const isLastEntry = entryIndex === displayEntries.length - 1}
-				{@const chainOpen = isChainExpanded(entry, entryKey, isLastEntry)}
+				{@const chainOpen = isChainExpanded(entry, entryKey)}
 				<CollapsibleContentBlock
 					open={chainOpen}
 					class="my-2"
 					icon={Brain}
 					title={entry.summary}
 					isStreaming={isStreaming && chainHasPending(entry.sections)}
-					onToggle={() => toggleChainExpanded(entry, entryKey, isLastEntry)}
+					onToggle={() => toggleChainExpanded(entryKey)}
 				>
 					{#if chainOpen}
 						{#each entry.sections as section, sIdx (entry.flatIndices[sIdx])}

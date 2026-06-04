@@ -20,7 +20,7 @@
 	}
 
 	let {
-		open = false,
+		open = $bindable(false),
 		class: className = '',
 		icon: IconComponent,
 		iconClass = 'h-4 w-4',
@@ -51,7 +51,8 @@
 
 <Collapsible.Root
 	{open}
-	onOpenChange={() => {
+	onOpenChange={(value) => {
+		open = value;
 		onToggle?.();
 	}}
 	class={className}
