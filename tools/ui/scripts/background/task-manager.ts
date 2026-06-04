@@ -42,6 +42,8 @@ export interface Task {
     agenticTurn: number;
     /** Maximum number of agentic turns before stopping */
     maxAgenticTurns: number;
+    /** If set, the task is waiting for a continue decision from the browser */
+    pendingContinueRequestId: string | null;
 }
 
 const tasks = new Map<string, Task>();
@@ -66,7 +68,8 @@ export function createTask(
         dbFlushTimer: null,
         pendingToolCalls: {},
         agenticTurn: 0,
-        maxAgenticTurns: 10
+        maxAgenticTurns: 10,
+        pendingContinueRequestId: null
     };
     tasks.set(taskId, task);
     return task;

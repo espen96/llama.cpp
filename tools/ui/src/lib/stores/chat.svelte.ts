@@ -394,6 +394,18 @@ class ChatStore {
 					} catch (err) {
 						console.error('[chatStore] Error resolving tool permission during reconnect:', err);
 					}
+				},
+				onContinueRequest: async (requestId: string) => {
+					try {
+						const shouldContinue = await agenticStore.requestContinue(convId, abortController.signal);
+						await fetch(`/api/chat/${encodeURIComponent(task.taskId)}/continue`, {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({ requestId, shouldContinue })
+						});
+					} catch (err) {
+						console.error('[chatStore] Error resolving continue request during reconnect:', err);
+					}
 				}
 			},
 			undefined // backend owns connection
@@ -1150,6 +1162,23 @@ class ChatStore {
 							});
 						} catch (err) {
 							console.error('[chatStore] Error resolving tool permission:', err);
+						}
+					},
+					onContinueRequest: async (requestId: string) => {
+						try {
+							const shouldContinue = await agenticStore.requestContinue(convId, abortController.signal);
+							const currentTaskId = this.chatActiveTaskIds.get(convId);
+							if (!currentTaskId) {
+								console.error('[chatStore] No active taskId found when continue decision resolved');
+								return;
+							}
+							await fetch(`/api/chat/${encodeURIComponent(currentTaskId)}/continue`, {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify({ requestId, shouldContinue })
+							});
+						} catch (err) {
+							console.error('[chatStore] Error resolving continue request:', err);
 						}
 					},
 					onComplete: async (content: string, reasoningContent?: string) => {

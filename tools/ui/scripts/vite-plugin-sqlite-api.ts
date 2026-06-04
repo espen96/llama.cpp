@@ -8,6 +8,7 @@ import * as llamaStream from './background/llama-stream.js';
 import * as taskManager from './background/task-manager.js';
 import * as sseHub from './background/sse-hub.js';
 import * as pendingPermissions from './background/pending-permissions.js';
+import * as pendingContinue from './background/pending-continue-requests.js';
 export function sqliteApiPlugin(): Plugin {
     return {
         name: 'vite-plugin-sqlite-api',
@@ -244,7 +245,8 @@ export function sqliteApiPlugin(): Plugin {
                         accumulatedContent: t.accumulatedContent,
                         accumulatedReasoning: t.accumulatedReasoning,
                         resolvedModel: t.resolvedModel,
-                        completionId: t.completionId
+                        completionId: t.completionId,
+                        pendingContinueRequestId: t.pendingContinueRequestId
                     }));
                     res.json(active);
                 } catch (e: any) {
@@ -282,6 +284,28 @@ export function sqliteApiPlugin(): Plugin {
                     const resolved = pendingPermissions.resolvePermission(requestId, decision);
                     if (!resolved) {
                         res.status(404).json({ error: 'Permission request not found or already resolved' });
+                        return;
+                    }
+                    res.json({ success: true });
+                } catch (e: any) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+            /**
+             * POST /api/chat/:taskId/continue
+             * Browser posts the user's continue decision here when turn limit is reached.
+             * Body: { requestId, shouldContinue: boolean }
+             */
+            app.post('/chat/:taskId/continue', (req, res) => {
+                try {
+                    const { requestId, shouldContinue } = req.body;
+                    if (!requestId || typeof shouldContinue !== 'boolean') {
+                        res.status(400).json({ error: 'requestId and shouldContinue are required' });
+                        return;
+                    }
+                    const resolved = pendingContinue.resolveContinue(requestId, shouldContinue);
+                    if (!resolved) {
+                        res.status(404).json({ error: 'Continue request not found or already resolved' });
                         return;
                     }
                     res.json({ success: true });

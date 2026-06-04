@@ -292,6 +292,7 @@ class AgenticStore {
 		};
 	}
 
+	// @deprecated Now handled by backend: llama-stream.ts
 	private parseToolArguments(args: string | Record<string, unknown>): Record<string, unknown> {
 		if (typeof args === 'object') return args;
 		const trimmed = args.trim();
@@ -352,7 +353,7 @@ class AgenticStore {
 		});
 	}
 
-	private async requestContinue(conversationId: string, signal?: AbortSignal): Promise<boolean> {
+	async requestContinue(conversationId: string, signal?: AbortSignal): Promise<boolean> {
 		this._pendingContinueRequests.set(conversationId, true);
 
 		return new Promise<boolean>((resolve) => {
@@ -385,6 +386,12 @@ class AgenticStore {
 	async runAgenticFlow(params: AgenticFlowParams): Promise<AgenticFlowResult> {
 		// Bypass frontend loop runner in favor of background agentic loop
 		return { handled: false };
+
+		// --- DEAD CODE BELOW ---
+		// @deprecated The entire agentic loop below is now handled by the backend (llama-stream.ts).
+		// Kept for reference and to reduce merge conflicts with upstream llama.cpp.
+		// The backend owns: tool execution, permissions, turn limits, and the agentic loop itself.
+		// The frontend now only renders what the backend sends via SSE events.
 
 		const { conversationId, messages, options = {}, callbacks, signal, perChatOverrides, assistantMessageId } = params;
 
@@ -476,6 +483,7 @@ class AgenticStore {
 		}
 	}
 
+	// @deprecated Now handled by backend: llama-stream.ts
 	private async executeAgenticLoop(params: {
 		conversationId: string;
 		messages: ApiChatMessageData[];
@@ -894,6 +902,7 @@ class AgenticStore {
 		}
 	}
 
+	// @deprecated Now handled by backend: llama-stream.ts
 	private buildFinalTimings(
 		capturedTimings: ChatMessageTimings | undefined,
 		agenticTimings: ChatMessageAgenticTimings
@@ -909,6 +918,7 @@ class AgenticStore {
 		};
 	}
 
+	// @deprecated Now handled by backend: llama-stream.ts
 	private normalizeToolCalls(toolCalls: ApiChatCompletionToolCall[]): AgenticToolCallList {
 		if (!toolCalls) return [];
 		return toolCalls.map((call, index) => ({
@@ -921,6 +931,7 @@ class AgenticStore {
 		}));
 	}
 
+	// @deprecated Now handled by backend: llama-stream.ts
 	private extractBase64Attachments(result: string): {
 		cleanedResult: string;
 		attachments: DatabaseMessageExtra[];
@@ -963,6 +974,7 @@ class AgenticStore {
 		return { cleanedResult: cleanedLines.join(NEWLINE_SEPARATOR), attachments };
 	}
 
+	// @deprecated Now handled by backend: llama-stream.ts
 	private buildAttachmentName(mimeType: string, index: number): string {
 		const extension = IMAGE_MIME_TO_EXTENSION[mimeType] ?? DEFAULT_IMAGE_EXTENSION;
 
@@ -1015,6 +1027,10 @@ export function agenticPendingContinueRequest(conversationId: string) {
 
 export function agenticResolveContinue(conversationId: string, shouldContinue: boolean) {
 	agenticStore.resolveContinue(conversationId, shouldContinue);
+}
+
+export function agenticRequestContinue(conversationId: string, signal?: AbortSignal): Promise<boolean> {
+	return agenticStore.requestContinue(conversationId, signal);
 }
 
 export function agenticHasPendingSteeringMessage(conversationId: string) {
