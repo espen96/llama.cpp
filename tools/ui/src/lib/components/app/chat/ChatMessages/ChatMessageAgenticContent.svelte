@@ -35,6 +35,21 @@
 	} from '$lib/stores/agentic.svelte';
 	import { config } from '$lib/stores/settings.svelte';
 
+	type TextEntry = {
+		kind: 'text';
+		section: (typeof sectionsParsed)[number];
+		flatIndex: number;
+	};
+
+	type ChainEntry = {
+		kind: 'chain';
+		sections: (typeof sectionsParsed)[number][];
+		flatIndices: number[];
+		summary: string;
+	};
+
+	type DisplayEntry = TextEntry | ChainEntry;
+
 	interface Props {
 		message: DatabaseMessage;
 		toolMessages?: DatabaseMessage[];
@@ -110,6 +125,130 @@
 				: ([] as ToolResultLine[])
 		}))
 	);
+
+	// Chain grouping: consecutive non-text sections become a single collapsible group
+	function isNonTextSection(
+		section: (typeof sectionsParsed)[number]
+	): section is (typeof sectionsParsed)[number] & {
+		type:
+			| AgenticSectionType.REASONING
+			| AgenticSectionType.REASONING_PENDING
+			| AgenticSectionType.TOOL_CALL
+			| AgenticSectionType.TOOL_CALL_PENDING
+			| AgenticSectionType.TOOL_CALL_STREAMING;
+	} {
+		return (
+			section.type === AgenticSectionType.REASONING ||
+			section.type === AgenticSectionType.REASONING_PENDING ||
+			section.type === AgenticSectionType.TOOL_CALL ||
+			section.type === AgenticSectionType.TOOL_CALL_PENDING ||
+			section.type === AgenticSectionType.TOOL_CALL_STREAMING
+		);
+	}
+
+	function generateChainSummary(chainSections: (typeof sectionsParsed)[number][]): string {
+		const toolNames: string[] = [];
+		let reasoningCount = 0;
+
+		for (const s of chainSections) {
+			if (
+				s.type === AgenticSectionType.REASONING ||
+				s.type === AgenticSectionType.REASONING_PENDING
+			) {
+				reasoningCount++;
+			} else if (s.toolName) {
+				if (!toolNames.includes(s.toolName)) {
+					toolNames.push(s.toolName);
+				}
+			}
+		}
+
+		const parts: string[] = [];
+
+		if (reasoningCount > 0) {
+			parts.push(reasoningCount === 1 ? 'Reasoning' : `Reasoning (${reasoningCount})`);
+		}
+
+		if (toolNames.length > 0) {
+			if (toolNames.length <= 3) {
+				parts.push(toolNames.join(', '));
+			} else {
+				parts.push(`${toolNames[0]}, ${toolNames[1]} + ${toolNames.length - 2} more`);
+			}
+		}
+
+		return parts.join(' — ') || 'Agent step';
+	}
+
+	function chainHasPending(
+		chainSections: (typeof sectionsParsed)[number][]
+	): boolean {
+		return chainSections.some(
+			(s) =>
+				s.type === AgenticSectionType.TOOL_CALL_PENDING ||
+				s.type === AgenticSectionType.TOOL_CALL_STREAMING ||
+				s.type === AgenticSectionType.REASONING_PENDING
+		);
+	}
+
+	const displayEntries = $derived.by((): DisplayEntry[] => {
+		const entries: DisplayEntry[] = [];
+		let currentChain: (typeof sectionsParsed)[number][] = [];
+		let currentIndices: number[] = [];
+
+		function flushChain() {
+			if (currentChain.length === 0) return;
+			if (currentChain.length === 1) {
+				entries.push({
+					kind: 'text',
+					section: currentChain[0],
+					flatIndex: currentIndices[0]
+				});
+			} else {
+				entries.push({
+					kind: 'chain',
+					sections: currentChain,
+					flatIndices: [...currentIndices],
+					summary: generateChainSummary(currentChain)
+				});
+			}
+			currentChain = [];
+			currentIndices = [];
+		}
+
+		for (let i = 0; i < sectionsParsed.length; i++) {
+			const section = sectionsParsed[i];
+
+			if (isNonTextSection(section)) {
+				currentChain.push(section);
+				currentIndices.push(i);
+			} else {
+				flushChain();
+				entries.push({ kind: 'text', section, flatIndex: i });
+			}
+		}
+
+		flushChain();
+		return entries;
+	});
+
+	let chainExpandedStates: Record<number, boolean> = $state({});
+
+	function isChainExpanded(entry: ChainEntry, entryIndex: number): boolean {
+		if (chainExpandedStates[entryIndex] !== undefined) {
+			return chainExpandedStates[entryIndex];
+		}
+		// Auto-expand during streaming if chain has pending sections
+		if (isStreaming && chainHasPending(entry.sections)) {
+			return true;
+		}
+		return false;
+	}
+
+	function toggleChainExpanded(entryIndex: number) {
+		const current = chainExpandedStates[entryIndex];
+		chainExpandedStates[entryIndex] = current === undefined ? true : !current;
+	}
 
 	// Group flat sections into agentic turns
 	// A new turn starts when a non-tool section follows a tool section
@@ -355,8 +494,23 @@
 			</div>
 		{/each}
 	{:else}
-		{#each sectionsParsed as section, index (index)}
-			{@render renderSection(section, index)}
+		{#each displayEntries as entry, entryIndex (entryIndex)}
+			{#if entry.kind === 'chain'}
+				<CollapsibleContentBlock
+					open={isChainExpanded(entry, entryIndex)}
+					class="my-2"
+					icon={Brain}
+					title={entry.summary}
+					isStreaming={isStreaming && chainHasPending(entry.sections)}
+					onToggle={() => toggleChainExpanded(entryIndex)}
+				>
+					{#each entry.sections as section, sIdx (entry.flatIndices[sIdx])}
+						{@render renderSection(section, entry.flatIndices[sIdx])}
+					{/each}
+				</CollapsibleContentBlock>
+			{:else}
+				{@render renderSection(entry.section, entry.flatIndex)}
+			{/if}
 		{/each}
 	{/if}
 
