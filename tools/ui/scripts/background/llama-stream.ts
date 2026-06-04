@@ -144,7 +144,10 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 	let lastToolResultMessageId: string | null = null;
 
 	try {
-		while (task.agenticTurn < task.maxAgenticTurns) {
+		// Outer loop: re-enters the inner turn loop when user chooses to continue after hitting the limit
+		let shouldContinueLoop = true;
+		while (shouldContinueLoop) {
+			while (task.agenticTurn < task.maxAgenticTurns) {
 			if (task.controller.signal.aborted) break;
 
 			const isFirstTurn = task.agenticTurn === 0;
@@ -298,7 +301,7 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 				const permissionKey = isMcp
 					? `mcp-${mcpConn!.serverId}:${toolName}`
 					: `builtin:${toolName}`;
-				const serverLabel = isMcp ? mcpConn!.serverId : 'Built-in Tools';
+				const serverLabel = isMcp ? mcpConn!.serverName : 'Built-in Tools';
 
 				// Check permission
 				let isAllowed = toolCtx.allowedTools.has(permissionKey);
@@ -352,14 +355,11 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 					isAllowed = true;
 					if (decision === 'always' && permissionKey) {
 						toolCtx.allowedTools.add(permissionKey);
-					} else if (decision === 'always_server') {
-						// Add all tools from this server to allowed set
-						for (const [key] of toolCtx.allowedTools) {
-							if (key.startsWith(`mcp-${mcpConn!.serverId}:`)) {
-								toolCtx.allowedTools.add(key);
-							}
+					} else if (decision === 'always_server' && mcpConn) {
+						// Add all tools from this MCP server to the allowed set
+						for (const tool of mcpConn.toolNames) {
+							toolCtx.allowedTools.add(`mcp-${mcpConn.serverId}:${tool}`);
 						}
-						toolCtx.allowedTools.add(permissionKey);
 					}
 				}
 
@@ -410,15 +410,16 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 
 			sseHub.send(taskId, 'continue_request', { requestId });
 
-			const shouldContinue = await pendingContinue.waitForContinue(requestId);
+			const userWantsContinue = await pendingContinue.waitForContinue(requestId);
 			task.pendingContinueRequestId = null;
 
-			if (shouldContinue) {
+			if (userWantsContinue) {
 				console.log(`[llama-stream] Task ${taskId}: user chose to continue, resetting turn counter`);
 				task.agenticTurn = 0;
-				// Continue the loop
+				// Continue the outer loop — re-enters the inner while loop
 			} else {
 				console.log(`[llama-stream] Task ${taskId}: user chose to stop (or timed out)`);
+				shouldContinueLoop = false;
 				// Run one final completion without tools so the LLM can wrap up
 				// Add a synthetic tool message explaining the limit
 				const limitMessage =
@@ -468,6 +469,7 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 				await runSingleCompletion(task, opts, finalRequestBody, finalMsgId, false);
 			}
 		}
+		} // end outer while loop
 
 		await finalFlush(task, currentAssistantMessageId, 'done');
 		taskManager.markTaskDone(taskId);
@@ -830,6 +832,7 @@ function buildEnabledMcpServers(
 
 		const entry: mcpSessionManager.McpServerEntry = {
 			id,
+			name: s.name && s.name.trim() ? s.name.trim() : id,
 			url: s.url.trim(),
 			requestTimeoutMs: s.requestTimeoutSeconds ? s.requestTimeoutSeconds * 1000 : 30_000
 		};

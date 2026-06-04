@@ -20,6 +20,8 @@ import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/webso
 export interface McpServerEntry {
     /** Unique server ID (matches the id in settings) */
     id: string;
+    /** Human-readable name (from settings, falls back to id) */
+    name: string;
     /** Full URL to the MCP server endpoint */
     url: string;
     /** Optional custom request headers (parsed from JSON string) */
@@ -31,6 +33,8 @@ export interface McpServerEntry {
 export interface McpConnection {
     client: Client;
     serverId: string;
+    /** Human-readable server name */
+    serverName: string;
     /** Tool names this server provides */
     toolNames: Set<string>;
 }
@@ -100,7 +104,7 @@ async function connectOne(server: McpServerEntry): Promise<McpConnection> {
     await client.connect(transport);
 
     // Discover tools
-    let toolNames = new Set<string>();
+    const toolNames = new Set<string>();
     try {
         const result = await client.listTools();
         for (const tool of result.tools ?? []) {
@@ -113,7 +117,7 @@ async function connectOne(server: McpServerEntry): Promise<McpConnection> {
         );
     }
 
-    return { client, serverId: server.id, toolNames };
+    return { client, serverId: server.id, serverName: server.name, toolNames };
 }
 
 /**
