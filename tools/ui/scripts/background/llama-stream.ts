@@ -832,7 +832,7 @@ function buildEnabledMcpServers(
 
 		const entry: mcpSessionManager.McpServerEntry = {
 			id,
-			name: s.name && s.name.trim() ? s.name.trim() : id,
+			name: s.name && s.name.trim() ? s.name.trim() : s.url.trim() || id,
 			url: s.url.trim(),
 			requestTimeoutMs: s.requestTimeoutSeconds ? s.requestTimeoutSeconds * 1000 : 30_000
 		};
