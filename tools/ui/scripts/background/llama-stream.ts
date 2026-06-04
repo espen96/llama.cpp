@@ -313,6 +313,11 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 						`[llama-stream] Task ${taskId}: tool "${toolName}" needs permission, sending request ${requestId}`
 					);
 
+					// Track on the task so SSE reconnect can re-send this request
+					task.pendingPermissionRequestId = requestId;
+					task.pendingPermissionToolName = toolName;
+					task.pendingPermissionServerLabel = serverLabel;
+
 					sseHub.send(taskId, 'permission_request', {
 						requestId,
 						toolName,
@@ -320,6 +325,12 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 					});
 
 					const decision = await pendingPermissions.waitForPermission(requestId);
+
+					// Clear pending state regardless of outcome
+					task.pendingPermissionRequestId = null;
+					task.pendingPermissionToolName = null;
+					task.pendingPermissionServerLabel = null;
+
 					console.log(
 						`[llama-stream] Task ${taskId}: permission decision for "${toolName}": ${decision}`
 					);

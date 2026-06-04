@@ -44,6 +44,10 @@ export interface Task {
     maxAgenticTurns: number;
     /** If set, the task is waiting for a continue decision from the browser */
     pendingContinueRequestId: string | null;
+    /** If set, the task is waiting for a tool permission decision from the browser */
+    pendingPermissionRequestId: string | null;
+    pendingPermissionToolName: string | null;
+    pendingPermissionServerLabel: string | null;
 }
 
 const tasks = new Map<string, Task>();
@@ -69,7 +73,10 @@ export function createTask(
         pendingToolCalls: {},
         agenticTurn: 0,
         maxAgenticTurns: 10,
-        pendingContinueRequestId: null
+        pendingContinueRequestId: null,
+        pendingPermissionRequestId: null,
+        pendingPermissionToolName: null,
+        pendingPermissionServerLabel: null
     };
     tasks.set(taskId, task);
     return task;

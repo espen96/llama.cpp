@@ -226,6 +226,23 @@ export function sqliteApiPlugin(): Plugin {
                     return;
                 }
                 const cleanup = sseHub.addClient(taskId, res);
+                // If the task has a pending permission request that was missed during
+                // the page reload, re-send it so the frontend can show the dialog
+                if (task.pendingPermissionRequestId) {
+                    sseHub.send(taskId, 'permission_request', {
+                        requestId: task.pendingPermissionRequestId,
+                        toolName: task.pendingPermissionToolName,
+                        serverLabel: task.pendingPermissionServerLabel
+                    });
+                }
+                // Same for continue requests
+                if (task.pendingContinueRequestId) {
+                    sseHub.send(taskId, 'continue_request', {
+                        requestId: task.pendingContinueRequestId,
+                        turn: task.agenticTurn,
+                        maxTurns: task.maxAgenticTurns
+                    });
+                }
                 req.on('close', () => {
                     cleanup();
                 });
@@ -246,7 +263,8 @@ export function sqliteApiPlugin(): Plugin {
                         accumulatedReasoning: t.accumulatedReasoning,
                         resolvedModel: t.resolvedModel,
                         completionId: t.completionId,
-                        pendingContinueRequestId: t.pendingContinueRequestId
+                        pendingContinueRequestId: t.pendingContinueRequestId,
+                        pendingPermissionRequestId: t.pendingPermissionRequestId
                     }));
                     res.json(active);
                 } catch (e: any) {
