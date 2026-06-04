@@ -50,6 +50,11 @@
 
 	type DisplayEntry = TextEntry | ChainEntry;
 
+	/** Stable key for a display entry — survives index shifts when new sections appear */
+	function getEntryKey(entry: DisplayEntry): string {
+		return entry.kind === 'chain' ? `c${entry.flatIndices[0]}` : `t${entry.flatIndex}`;
+	}
+
 	interface Props {
 		message: DatabaseMessage;
 		toolMessages?: DatabaseMessage[];
@@ -232,11 +237,11 @@
 		return entries;
 	});
 
-	let chainExpandedStates: Record<number, boolean> = $state({});
+	let chainExpandedStates: Record<string, boolean> = $state({});
 
-	function isChainExpanded(entry: ChainEntry, entryIndex: number): boolean {
-		if (chainExpandedStates[entryIndex] !== undefined) {
-			return chainExpandedStates[entryIndex];
+	function isChainExpanded(entry: ChainEntry, entryKey: string): boolean {
+		if (chainExpandedStates[entryKey] !== undefined) {
+			return chainExpandedStates[entryKey];
 		}
 		// Auto-expand during streaming if chain has pending sections
 		if (isStreaming && chainHasPending(entry.sections)) {
@@ -245,9 +250,9 @@
 		return false;
 	}
 
-	function toggleChainExpanded(entryIndex: number) {
-		const current = chainExpandedStates[entryIndex];
-		chainExpandedStates[entryIndex] = current === undefined ? true : !current;
+	function toggleChainExpanded(entryKey: string) {
+		const current = chainExpandedStates[entryKey];
+		chainExpandedStates[entryKey] = current === undefined ? true : !current;
 	}
 
 	// Group flat sections into agentic turns
@@ -494,16 +499,17 @@
 			</div>
 		{/each}
 	{:else}
-		{#each displayEntries as entry, entryIndex (entryIndex)}
+		{#each displayEntries as entry, entryIndex (getEntryKey(entry))}
 			{#if entry.kind === 'chain'}
-				{@const chainOpen = isChainExpanded(entry, entryIndex)}
+				{@const entryKey = getEntryKey(entry)}
+				{@const chainOpen = isChainExpanded(entry, entryKey)}
 				<CollapsibleContentBlock
 					open={chainOpen}
 					class="my-2"
 					icon={Brain}
 					title={entry.summary}
 					isStreaming={isStreaming && chainHasPending(entry.sections)}
-					onToggle={() => toggleChainExpanded(entryIndex)}
+					onToggle={() => toggleChainExpanded(entryKey)}
 				>
 					{#if chainOpen}
 						{#each entry.sections as section, sIdx (entry.flatIndices[sIdx])}
