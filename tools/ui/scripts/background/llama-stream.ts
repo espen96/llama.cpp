@@ -146,11 +146,12 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 	try {
 		// Outer loop: re-enters the inner turn loop when user chooses to continue after hitting the limit
 		let shouldContinueLoop = true;
+		let isFirstTurnOfStream = true;
 		while (shouldContinueLoop) {
 			while (task.agenticTurn < task.maxAgenticTurns) {
 			if (task.controller.signal.aborted) break;
 
-			const isFirstTurn = task.agenticTurn === 0;
+			const isFirstTurn = isFirstTurnOfStream;
 			console.log(
 				`[llama-stream] Task ${taskId}: starting turn ${task.agenticTurn + 1}/${task.maxAgenticTurns}`
 			);
@@ -197,6 +198,8 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 				currentAssistantMessageId,
 				isFirstTurn
 			);
+
+			isFirstTurnOfStream = false;
 
 			task.agenticTurn++;
 
