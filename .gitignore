@@ -166,3 +166,5 @@ tools/ui/.data/llama-ui.sqlite3-wal
 tools/ui/.data/llama-ui.sqlite3-wal
 tools/ui/package-lock.json
 /tools/ui/.data
+*.sqlite3
+*.sqlite3-shm
