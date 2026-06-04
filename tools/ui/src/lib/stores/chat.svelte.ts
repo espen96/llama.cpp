@@ -318,6 +318,8 @@ class ChatStore {
 					this.setChatReasoning(convId, true);
 				},
 				onComplete: async (content: string, reasoningContent?: string) => {
+					// Guard against double-complete (done event + [DONE] chunk both calling finalize)
+					if (!this.chatActiveTaskIds.has(convId)) return;
 					this.chatActiveTaskIds.delete(convId);
 					const idx = conversationsStore.findMessageIndex(messageId);
 					if (idx !== -1) {
@@ -1151,6 +1153,8 @@ class ChatStore {
 						}
 					},
 					onComplete: async (content: string, reasoningContent?: string) => {
+						// Guard against double-complete (done event + [DONE] chunk both calling finalize)
+						if (!this.chatActiveTaskIds.has(convId)) return;
 						this.chatActiveTaskIds.delete(convId);
 						// The backend has already written to SQLite; we just update the UI
 						const idx = conversationsStore.findMessageIndex(currentMessageId);

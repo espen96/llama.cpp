@@ -496,17 +496,20 @@
 	{:else}
 		{#each displayEntries as entry, entryIndex (entryIndex)}
 			{#if entry.kind === 'chain'}
+				{@const chainOpen = isChainExpanded(entry, entryIndex)}
 				<CollapsibleContentBlock
-					open={isChainExpanded(entry, entryIndex)}
+					open={chainOpen}
 					class="my-2"
 					icon={Brain}
 					title={entry.summary}
 					isStreaming={isStreaming && chainHasPending(entry.sections)}
 					onToggle={() => toggleChainExpanded(entryIndex)}
 				>
-					{#each entry.sections as section, sIdx (entry.flatIndices[sIdx])}
-						{@render renderSection(section, entry.flatIndices[sIdx])}
-					{/each}
+					{#if chainOpen}
+						{#each entry.sections as section, sIdx (entry.flatIndices[sIdx])}
+							{@render renderSection(section, entry.flatIndices[sIdx])}
+						{/each}
+					{/if}
 				</CollapsibleContentBlock>
 			{:else}
 				{@render renderSection(entry.section, entry.flatIndex)}

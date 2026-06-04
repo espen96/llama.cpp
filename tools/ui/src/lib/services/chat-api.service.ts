@@ -58,6 +58,7 @@ export function startBackgroundChat(
 	// We track accumulated content here so onComplete gets the full text.
 	let accumulatedContent = '';
 	let accumulatedReasoning = '';
+	let finalized = false;
 
 	// Track ongoing tool calls across deltas (mirrors chat.service.ts logic)
 	const pendingToolCalls: Record<
@@ -196,6 +197,10 @@ export function startBackgroundChat(
 
 		// Fallback: if connection closes without done event
 		eventSource.onerror = () => {
+			if (finalized) {
+				eventSource?.close();
+				return;
+			}
 			// EventSource will auto-retry; we only care if the task is done
 			if (combinedSignal.aborted) {
 				eventSource?.close();
@@ -275,6 +280,8 @@ export function startBackgroundChat(
 	}
 
 	function finalize(): void {
+		if (finalized) return;
+		finalized = true;
 		callbacks
 			.onComplete?.(accumulatedContent, accumulatedReasoning || undefined)
 			.catch((err) => callbacks.onError?.(err instanceof Error ? err : new Error(String(err))));
@@ -303,6 +310,7 @@ export function reconnectBackgroundChat(
 	let eventSource: EventSource | null = null;
 	let accumulatedContent = initialContent;
 	let accumulatedReasoning = initialReasoning;
+	let finalized = false;
 
 	const pendingToolCalls: Record<
 		number,
@@ -406,6 +414,10 @@ export function reconnectBackgroundChat(
 		});
 
 		eventSource.onerror = () => {
+			if (finalized) {
+				eventSource?.close();
+				return;
+			}
 			if (combinedSignal.aborted) {
 				eventSource?.close();
 			}
@@ -480,6 +492,8 @@ export function reconnectBackgroundChat(
 	}
 
 	function finalize(): void {
+		if (finalized) return;
+		finalized = true;
 		callbacks
 			.onComplete?.(accumulatedContent, accumulatedReasoning || undefined)
 			.catch((err) => callbacks.onError?.(err instanceof Error ? err : new Error(String(err))));
