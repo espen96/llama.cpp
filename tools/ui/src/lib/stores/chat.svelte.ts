@@ -321,12 +321,10 @@ class ChatStore {
 					this.chatActiveTaskIds.delete(convId);
 					const idx = conversationsStore.findMessageIndex(messageId);
 					if (idx !== -1) {
-						const uiUpdate: Partial<DatabaseMessage> = {
+						conversationsStore.updateMessageAtIndex(idx, {
 							content,
 							reasoningContent: reasoningContent || undefined
-						};
-						conversationsStore.updateMessageAtIndex(idx, uiUpdate);
-						DatabaseService.updateMessage(messageId, uiUpdate).catch(console.error);
+						});
 					}
 					await conversationsStore.updateCurrentNode(messageId);
 					this.setStreamingActive(false);
@@ -351,15 +349,6 @@ class ChatStore {
 					}
 				},
 				onAssistantMessageCreated: (newMsgId: string, parentId: string) => {
-					const prevIdx = conversationsStore.findMessageIndex(messageId);
-					if (prevIdx !== -1) {
-						const prevMsg = conversationsStore.activeMessages[prevIdx];
-						DatabaseService.updateMessage(messageId, {
-							content: streamedContent || undefined,
-							reasoningContent: streamedReasoning || undefined,
-							toolCalls: prevMsg.toolCalls || undefined
-						}).catch(console.error);
-					}
 					const newMsg: DatabaseMessage = {
 						id: newMsgId,
 						convId,
@@ -1112,19 +1101,6 @@ class ChatStore {
 					onModel: streamCallbacks.onModel,
 					onCompletionId: streamCallbacks.onCompletionId,
 					onAssistantMessageCreated: (messageId: string, parentId: string) => {
-						// Persist the current message's accumulated content, reasoning,
-						// and tool calls to SQLite before state is reset for the next turn.
-						// The backend may not write reasoning_content, so the frontend
-						// must ensure it is persisted here.
-						const prevIdx = conversationsStore.findMessageIndex(currentMessageId);
-						if (prevIdx !== -1) {
-							const prevMsg = conversationsStore.activeMessages[prevIdx];
-							DatabaseService.updateMessage(currentMessageId, {
-								content: streamedContent || undefined,
-								reasoningContent: streamedReasoningContent || undefined,
-								toolCalls: prevMsg.toolCalls || undefined
-							}).catch(console.error);
-						}
 						const newMsg: DatabaseMessage = {
 							id: messageId,
 							convId,
@@ -1176,8 +1152,7 @@ class ChatStore {
 					},
 					onComplete: async (content: string, reasoningContent?: string) => {
 						this.chatActiveTaskIds.delete(convId);
-						// The backend has already written to SQLite; we just update the UI,
-						// but reasoning_content may not have been persisted by the backend.
+						// The backend has already written to SQLite; we just update the UI
 						const idx = conversationsStore.findMessageIndex(currentMessageId);
 						const uiUpdate: Partial<DatabaseMessage> = {
 							content,
@@ -1185,8 +1160,6 @@ class ChatStore {
 						};
 						if (resolvedModel) uiUpdate.model = resolvedModel;
 						conversationsStore.updateMessageAtIndex(idx, uiUpdate);
-						// Ensure reasoning_content is persisted for the final message
-						DatabaseService.updateMessage(currentMessageId, uiUpdate).catch(console.error);
 						await conversationsStore.updateCurrentNode(currentMessageId);
 						cleanupStreamingState();
 						if (onComplete) await onComplete(content);
