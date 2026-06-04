@@ -18,6 +18,18 @@
 import { MessageRole } from '$lib/enums';
 
 /**
+ * Builds a Map<id, message> for O(1) lookups. Reuse this across multiple
+ * branching functions to avoid rebuilding on every call.
+ */
+export function buildNodeMap(messages: readonly DatabaseMessage[]): Map<string, DatabaseMessage> {
+	const nodeMap = new Map<string, DatabaseMessage>();
+	for (const msg of messages) {
+		nodeMap.set(msg.id, msg);
+	}
+	return nodeMap;
+}
+
+/**
  * Finds a message by its ID in the given messages array.
  */
 export function findMessageById(
@@ -43,12 +55,7 @@ export function filterByLeafNodeId(
 	includeRoot: boolean = false
 ): readonly DatabaseMessage[] {
 	const result: DatabaseMessage[] = [];
-	const nodeMap = new Map<string, DatabaseMessage>();
-
-	// Build node map for quick lookups
-	for (const msg of messages) {
-		nodeMap.set(msg.id, msg);
-	}
+	const nodeMap = buildNodeMap(messages);
 
 	// Find the starting node (leaf node or latest if not found)
 	let startNode: DatabaseMessage | undefined = nodeMap.get(leafNodeId);
@@ -96,12 +103,13 @@ export function filterByLeafNodeId(
  * @param messageId - Starting message ID to find leaf for
  * @returns The leaf node ID, or the original messageId if no children
  */
-export function findLeafNode(messages: readonly DatabaseMessage[], messageId: string): string {
-	const nodeMap = new Map<string, DatabaseMessage>();
-
-	// Build node map for quick lookups
-	for (const msg of messages) {
-		nodeMap.set(msg.id, msg);
+export function findLeafNode(
+	messages: readonly DatabaseMessage[],
+	messageId: string,
+	nodeMap?: Map<string, DatabaseMessage>
+): string {
+	if (!nodeMap) {
+		nodeMap = buildNodeMap(messages);
 	}
 
 	let currentNode: DatabaseMessage | undefined = nodeMap.get(messageId);
@@ -126,12 +134,7 @@ export function findDescendantMessages(
 	messages: readonly DatabaseMessage[],
 	messageId: string
 ): string[] {
-	const nodeMap = new Map<string, DatabaseMessage>();
-
-	// Build node map for quick lookups
-	for (const msg of messages) {
-		nodeMap.set(msg.id, msg);
-	}
+	const nodeMap = buildNodeMap(messages);
 
 	const descendants: string[] = [];
 	const queue: string[] = [messageId];
@@ -162,13 +165,11 @@ export function findDescendantMessages(
  */
 export function getMessageSiblings(
 	messages: readonly DatabaseMessage[],
-	messageId: string
+	messageId: string,
+	nodeMap?: Map<string, DatabaseMessage>
 ): ChatMessageSiblingInfo | null {
-	const nodeMap = new Map<string, DatabaseMessage>();
-
-	// Build node map for quick lookups
-	for (const msg of messages) {
-		nodeMap.set(msg.id, msg);
+	if (!nodeMap) {
+		nodeMap = buildNodeMap(messages);
 	}
 
 	const message = nodeMap.get(messageId);
@@ -203,7 +204,7 @@ export function getMessageSiblings(
 
 	// Convert sibling message IDs to their corresponding leaf node IDs
 	// This allows navigation between different conversation branches
-	const siblingLeafIds = siblingIds.map((siblingId: string) => findLeafNode(messages, siblingId));
+	const siblingLeafIds = siblingIds.map((siblingId: string) => findLeafNode(messages, siblingId, nodeMap));
 
 	// Find current message's position among siblings
 	const currentIndex = siblingIds.indexOf(messageId);

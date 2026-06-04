@@ -23,6 +23,7 @@
 		copyToClipboard,
 		formatMessageForClipboard,
 		getMessageSiblings,
+		buildNodeMap,
 		hasAgenticContent
 	} from '$lib/utils';
 
@@ -176,6 +177,9 @@
 			? messages
 			: messages.filter((msg) => msg.type !== MessageRole.SYSTEM);
 
+		// Build nodeMap once for O(1) lookups — shared across all getMessageSiblings calls
+		const nodeMap = buildNodeMap(allConversationMessages);
+
 		// Build display entries, grouping agentic sessions into single entries.
 		// An agentic session = assistant(with tool_calls) → tool → assistant → tool → ... → assistant(final)
 		const result: Array<{
@@ -221,7 +225,7 @@
 				}
 			}
 
-			const siblingInfo = getMessageSiblings(allConversationMessages, msg.id);
+			const siblingInfo = getMessageSiblings(allConversationMessages, msg.id, nodeMap);
 
 			result.push({
 				message: msg,

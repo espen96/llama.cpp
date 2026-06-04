@@ -21,6 +21,7 @@ export { default as autoResizeTextarea } from './autoresize-textarea';
 
 // Branching utilities
 export {
+	buildNodeMap,
 	filterByLeafNodeId,
 	findMessageById,
 	findLeafNode,
