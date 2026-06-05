@@ -1262,11 +1262,12 @@ class ChatStore {
 
 		try {
 			const allMessages = await conversationsStore.getConversationMessages(conversationId);
+			const activePath = filterByLeafNodeId(allMessages, messageId, false);
 			const apiOptions = {
 				...this.getApiOptions(),
 				tools: toolsStore.getEnabledToolsForLLM()
 			};
-			const oaiBody = await ChatService.buildOaiRequestBody(allMessages, apiOptions);
+			const oaiBody = await ChatService.buildOaiRequestBody(activePath as DatabaseMessage[], apiOptions);
 
 			const res = await fetch(`/api/chat/${encodeURIComponent(conversationId)}/resume-permission`, {
 				method: 'POST',
@@ -1302,11 +1303,12 @@ class ChatStore {
 	async resumeContinue(conversationId: string, messageId: string, shouldContinue: boolean) {
 		try {
 			const allMessages = await conversationsStore.getConversationMessages(conversationId);
+			const activePath = filterByLeafNodeId(allMessages, messageId, false);
 			const apiOptions = {
 				...this.getApiOptions(),
 				tools: toolsStore.getEnabledToolsForLLM()
 			};
-			const oaiBody = await ChatService.buildOaiRequestBody(allMessages, apiOptions);
+			const oaiBody = await ChatService.buildOaiRequestBody(activePath as DatabaseMessage[], apiOptions);
 
 			const res = await fetch(`/api/chat/${encodeURIComponent(conversationId)}/resume-continue`, {
 				method: 'POST',
