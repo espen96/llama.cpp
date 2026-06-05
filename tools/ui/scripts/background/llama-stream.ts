@@ -885,12 +885,36 @@ function readToolSettings(settings: Record<string, string>): ToolSettings {
 	} catch {}
 
 	try {
-		const raw = settings['LlamaUi.disabledTools'];
+		const raw = settings['LlamaUi.disabledToolKeys'];
 		if (raw) {
 			const parsed = JSON.parse(raw);
-			if (Array.isArray(parsed)) disabledTools = new Set(parsed);
+			if (Array.isArray(parsed)) {
+				// Values are stable keys like "builtin:name" or "mcp-serverId:name"
+				// Extract bare tool names for backend filtering
+				for (const key of parsed) {
+					if (typeof key === 'string') {
+						const lastColon = key.lastIndexOf(':');
+						disabledTools.add(lastColon >= 0 ? key.substring(lastColon + 1) : key);
+					}
+				}
+			}
 		}
 	} catch {}
+
+	// Fallback: read legacy key for migration
+	if (disabledTools.size === 0) {
+		try {
+			const raw = settings['LlamaUi.disabledTools'];
+			if (raw) {
+				const parsed = JSON.parse(raw);
+				if (Array.isArray(parsed)) {
+					for (const name of parsed) {
+						if (typeof name === 'string') disabledTools.add(name);
+					}
+				}
+			}
+		} catch {}
+	}
 
 	try {
 		const configRaw = settings['LlamaUi.config'];

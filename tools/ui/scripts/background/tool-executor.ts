@@ -7,7 +7,7 @@
  * Permission model:
  * - Tools in `allowedTools` (from LlamaUi.alwaysAllowedTools in SQLite) execute automatically.
  * - Tools NOT in `allowedTools` are denied — no interactive prompt is possible on the backend.
- * - Tools in `disabledTools` (from LlamaUi.disabledTools in SQLite) are always skipped.
+ * - Tools in `disabledTools` (from LlamaUi.disabledToolKeys in SQLite, legacy: LlamaUi.disabledTools) are always skipped.
  */
 
 import http from 'http';
