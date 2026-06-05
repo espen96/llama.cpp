@@ -81,17 +81,17 @@
 	<Card class="gap-0 border-muted bg-muted/30 py-0">
 		<Collapsible.Trigger class="flex w-full cursor-pointer items-start justify-between gap-2 p-3">
 			<div class="flex min-w-0 items-center gap-2">
-				<div class="flex items-center gap-2 text-muted-foreground">
-					{#if IconComponent}
-						<IconComponent class={iconClass} />
-					{/if}
+			<div class="flex min-w-0 items-center gap-2 text-muted-foreground">
+				{#if IconComponent}
+					<IconComponent class={iconClass} />
+				{/if}
 
-					<span class="font-mono text-sm font-medium">{title}</span>
+				<span class="min-w-0 truncate font-mono text-sm font-medium">{title}</span>
 
-					{#if subtitle}
-						<span class="text-xs italic">{subtitle}</span>
-					{/if}
-				</div>
+				{#if subtitle}
+					<span class="shrink-0 text-xs italic">{subtitle}</span>
+				{/if}
+			</div>
 
 				{#if displayedPreview && !showThoughtInProgress}
 					<div class="flex min-w-0 items-baseline justify-between gap-2">
