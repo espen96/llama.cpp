@@ -3,11 +3,14 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 
-const dbPath = path.resolve(process.cwd(), '.data/llama-ui.sqlite3');
-const dbDir = path.dirname(dbPath);
+const isTestEnv = process.env.NODE_ENV === 'test' || process.env.VITEST;
+const dbPath = isTestEnv ? ':memory:' : path.resolve(process.cwd(), '.data/llama-ui.sqlite3');
 
-if (!fs.existsSync(dbDir)) {
-    fs.mkdirSync(dbDir, { recursive: true });
+if (!isTestEnv) {
+    const dbDir = path.dirname(dbPath);
+    if (!fs.existsSync(dbDir)) {
+        fs.mkdirSync(dbDir, { recursive: true });
+    }
 }
 
 export const db = new Database(dbPath);

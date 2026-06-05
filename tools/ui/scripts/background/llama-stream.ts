@@ -25,8 +25,6 @@ import type { ToolCallAccumulator } from './task-manager.js';
 import * as sseHub from './sse-hub.js';
 import * as mcpSessionManager from './mcp-session-manager.js';
 import type { McpConnectionMap } from './mcp-session-manager.js';
-import * as pendingPermissions from './pending-permissions.js';
-import * as pendingContinue from './pending-continue-requests.js';
 import { executeTool } from './tool-executor.js';
 import type { ToolContext } from './tool-executor.js';
 import crypto from 'crypto';
@@ -308,70 +306,26 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 
 				if (!isAllowed) {
 					// Tool not in always-allowed list — request permission from the browser
-					const requestId = pendingPermissions.newRequestId();
 					console.log(
-						`[llama-stream] Task ${taskId}: tool "${toolName}" needs permission, sending request ${requestId}`
+						`[llama-stream] Task ${taskId}: tool "${toolName}" needs permission, saving state to DB and exiting.`
 					);
 
-					// Track on the task so SSE reconnect can re-send this request
-					task.pendingPermissionRequestId = requestId;
-					task.pendingPermissionToolName = toolName;
-					task.pendingPermissionServerLabel = serverLabel;
+					// 1. Sync Point: Flush all accumulated text and the complete tool calls JSON to DB
+					await flushAssistantWithToolCalls(task, currentAssistantMessageId, toolCalls);
+					
+					// 2. Override status to waiting
+					updateMessage(currentAssistantMessageId, { generation_status: 'waiting_for_permission' });
 
+					// 3. Notify frontend
 					sseHub.send(taskId, 'permission_request', {
-						requestId,
 						toolName,
 						serverLabel
 					});
 
-					const decision = await pendingPermissions.waitForPermission(requestId);
-
-					// Clear pending state regardless of outcome
-					task.pendingPermissionRequestId = null;
-					task.pendingPermissionToolName = null;
-					task.pendingPermissionServerLabel = null;
-
-					console.log(
-						`[llama-stream] Task ${taskId}: permission decision for "${toolName}": ${decision}`
-					);
-
-					if (decision === 'deny') {
-						const result = { content: `Permission denied for tool "${toolName}".`, isError: true };
-						const toolResultMsg = createToolResultMessage(
-							opts.conversationId,
-							toolCall.id,
-							result.content,
-							currentAssistantMessageId
-						);
-						lastToolResultMessageId = toolResultMsg.id;
-
-						sseHub.send(taskId, 'tool_result', {
-							id: toolCall.id,
-							toolName,
-							content: result.content,
-							isError: result.isError,
-							messageId: toolResultMsg.id,
-							parentId: currentAssistantMessageId
-						});
-
-						runningMessages.push({
-							role: 'tool',
-							tool_call_id: toolCall.id,
-							content: result.content
-						});
-						continue;
-					}
-
-					// 'once', 'always', or 'always_server' — allow execution
-					isAllowed = true;
-					if (decision === 'always' && permissionKey) {
-						toolCtx.allowedTools.add(permissionKey);
-					} else if (decision === 'always_server' && mcpConn) {
-						// Add all tools from this MCP server to the allowed set
-						for (const tool of mcpConn.toolNames) {
-							toolCtx.allowedTools.add(`mcp-${mcpConn.serverId}:${tool}`);
-						}
-					}
+					// 4. Clean exit
+					taskManager.markTaskDone(taskId);
+					sseHub.closeTask(taskId);
+					return;
 				}
 
 				const result = await executeTool(toolName, parsedArgs, toolCtx);
@@ -413,72 +367,22 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 		// Max turns reached — ask the user whether to continue
 		if (task.agenticTurn >= task.maxAgenticTurns) {
 			console.warn(
-				`[llama-stream] Task ${taskId}: max agentic turns (${task.maxAgenticTurns}) reached, requesting continue`
+				`[llama-stream] Task ${taskId}: max agentic turns (${task.maxAgenticTurns}) reached, requesting continue and exiting.`
 			);
 
-			const requestId = pendingContinue.newRequestId();
-			task.pendingContinueRequestId = requestId;
+			// 1. Flush current state
+			await finalFlush(task, currentAssistantMessageId, 'waiting_for_continue');
 
-			sseHub.send(taskId, 'continue_request', { requestId });
+			// 2. Notify frontend
+			sseHub.send(taskId, 'continue_request', {
+				turn: task.agenticTurn,
+				maxTurns: task.maxAgenticTurns
+			});
 
-			const userWantsContinue = await pendingContinue.waitForContinue(requestId);
-			task.pendingContinueRequestId = null;
-
-			if (userWantsContinue) {
-				console.log(`[llama-stream] Task ${taskId}: user chose to continue, resetting turn counter`);
-				task.agenticTurn = 0;
-				// Continue the outer loop — re-enters the inner while loop
-			} else {
-				console.log(`[llama-stream] Task ${taskId}: user chose to stop (or timed out)`);
-				shouldContinueLoop = false;
-				// Run one final completion without tools so the LLM can wrap up
-				// Add a synthetic tool message explaining the limit
-				const limitMessage =
-					`[Agentic turn limit reached: you have used ${task.maxAgenticTurns}/${task.maxAgenticTurns} tool execution turns for this conversation. ` +
-					`No more tool calls can be made this turn. Tools will be available again in the next user message. ` +
-					`If you need more tool calls to complete the task, inform the user of your current progress and ask if they would like you to continue.]`;
-
-				runningMessages.push({
-					role: 'tool',
-					tool_call_id: 'agentic-turn-limit',
-					content: limitMessage
-				});
-
-				// Reset accumulators for the final completion
-				task.accumulatedContent = '';
-				task.accumulatedReasoning = '';
-				task.accumulatedToolCalls = '';
-				task.pendingToolCalls = {};
-
-				// Create a new assistant message placeholder for the final response
-				const finalMsgId = crypto.randomUUID();
-				const parentId = lastToolResultMessageId || currentAssistantMessageId;
-				createAssistantMessagePlaceholder(opts.conversationId, parentId, finalMsgId);
-				currentAssistantMessageId = finalMsgId;
-				task.assistantMessageId = finalMsgId;
-
-				sseHub.send(taskId, 'assistant_message', {
-					messageId: finalMsgId,
-					parentId
-				});
-
-				// Start flush timer for the final completion
-				if (!task.dbFlushTimer) {
-					task.dbFlushTimer = setInterval(() => {
-						flushToDB(task);
-					}, DB_FLUSH_INTERVAL_MS);
-				}
-
-				// Run one more completion so the LLM can respond to the limit message
-				// Note: we intentionally omit tools to prevent the model from attempting more tool calls
-				const finalRequestBody = {
-					...opts.requestBody,
-					messages: runningMessages,
-					stream: true
-				};
-
-				await runSingleCompletion(task, opts, finalRequestBody, finalMsgId, false);
-			}
+			// 3. Clean exit
+			taskManager.markTaskDone(taskId);
+			sseHub.closeTask(taskId);
+			return;
 		}
 		} // end outer while loop
 
@@ -500,12 +404,6 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 		}
 		sseHub.closeTask(taskId);
 	} finally {
-		// Disconnect MCP connections
-		if (mcpConnections.size > 0) {
-			await mcpSessionManager.disconnectAll(mcpConnections).catch((err) => {
-				console.warn(`[llama-stream] Error disconnecting MCP for task ${taskId}:`, err);
-			});
-		}
 		setTimeout(() => taskManager.deleteTask(taskId), TASK_GC_DELAY_MS);
 	}
 }

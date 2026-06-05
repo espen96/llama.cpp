@@ -41,19 +41,24 @@ export interface McpConnection {
 
 export type McpConnectionMap = Map<string, McpConnection>;
 
+// Global cache for MCP connections
+const globalConnections: McpConnectionMap = new Map();
+
 /**
  * Connect to all provided MCP servers.
- * Returns a map of serverId → McpConnection.
  * Servers that fail to connect are silently skipped (logged as warnings).
+ * Reuses existing connections from the global cache if available.
  */
 export async function connectAll(servers: McpServerEntry[]): Promise<McpConnectionMap> {
-    const connections: McpConnectionMap = new Map();
-
     await Promise.allSettled(
         servers.map(async (server) => {
+            if (globalConnections.has(server.id)) {
+                // Already connected, skip
+                return;
+            }
             try {
                 const conn = await connectOne(server);
-                connections.set(server.id, conn);
+                globalConnections.set(server.id, conn);
                 console.log(
                     `[mcp-session-manager] Connected to ${server.id} (${conn.toolNames.size} tools)`
                 );
@@ -66,7 +71,7 @@ export async function connectAll(servers: McpServerEntry[]): Promise<McpConnecti
         })
     );
 
-    return connections;
+    return globalConnections;
 }
 
 async function connectOne(server: McpServerEntry): Promise<McpConnection> {
