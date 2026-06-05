@@ -13,7 +13,8 @@
 		AgenticSectionType,
 		ChatMessageStatsView,
 		FileTypeText,
-		ToolPermissionDecision
+		ToolPermissionDecision,
+		MessageRole
 	} from '$lib/enums';
 	import type {
 		ChatMessageAgenticTimings,
@@ -80,14 +81,26 @@
 
 	const sections = $derived(deriveAgenticSections(message, toolMessages, [], isStreaming));
 
+	const activeAssistantMessage = $derived.by(() => {
+		if (toolMessages && toolMessages.length > 0) {
+			for (let i = toolMessages.length - 1; i >= 0; i--) {
+				if (toolMessages[i].role === MessageRole.ASSISTANT) {
+					return toolMessages[i];
+				}
+			}
+		}
+		return message;
+	});
+
 	const pendingPermission = $derived.by(() => {
-		if (message.generation_status !== 'waiting_for_permission') return null;
+		if (activeAssistantMessage.generation_status !== 'waiting_for_permission') return null;
 		if (!isLastAssistantMessage) return null;
 		const pendingSection = sections.find(s => s.type === AgenticSectionType.TOOL_CALL_PENDING);
 		if (!pendingSection?.toolName) return null;
 		return {
 			toolName: pendingSection.toolName,
-			serverLabel: toolsStore.getToolServerLabel(pendingSection.toolName)
+			serverLabel: toolsStore.getToolServerLabel(pendingSection.toolName),
+			messageId: activeAssistantMessage.id
 		};
 	});
 
@@ -105,13 +118,13 @@
 	function handlePermission(decision: ToolPermissionDecision) {
 		if (!pendingPermission) return;
 		permissionDismissed = true;
-		agenticResolvePermission(message.convId, message.id, pendingPermission.toolName, pendingPermission.serverLabel, decision);
+		agenticResolvePermission(message.convId, pendingPermission.messageId, pendingPermission.toolName, pendingPermission.serverLabel, decision);
 	}
 
 	let continueDismissed = $state(false);
 
 	const pendingContinue = $derived(
-		isLastAssistantMessage && message.generation_status === 'waiting_for_continue'
+		isLastAssistantMessage && activeAssistantMessage.generation_status === 'waiting_for_continue'
 	);
 
 	let prevContinueRef = false;
@@ -126,7 +139,7 @@
 
 	function handleContinue(shouldContinue: boolean) {
 		continueDismissed = true;
-		agenticResolveContinue(message.convId, message.id, shouldContinue);
+		agenticResolveContinue(message.convId, activeAssistantMessage.id, shouldContinue);
 	}
 
 	// Parse tool results with images
