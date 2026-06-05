@@ -269,13 +269,9 @@
 
 	let chainExpandedStates: Record<string, boolean> = $state({});
 
-	function isChainExpanded(entry: ChainEntry, entryKey: string): boolean {
+	function isChainExpanded(_entry: ChainEntry, entryKey: string): boolean {
 		if (chainExpandedStates[entryKey] !== undefined) {
 			return chainExpandedStates[entryKey];
-		}
-		// Auto-expand during streaming if chain has pending sections
-		if (isStreaming && chainHasPending(entry.sections)) {
-			return true;
 		}
 		return false;
 	}
