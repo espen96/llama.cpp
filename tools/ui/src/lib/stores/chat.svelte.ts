@@ -17,6 +17,7 @@ import { ChatService } from '$lib/services/chat.service';
 import { startBackgroundChat, reconnectBackgroundChat, getActiveTasks, abortTask } from '$lib/services/chat-api.service';
 import { conversationsStore } from '$lib/stores/conversations.svelte';
 import { toolsStore } from '$lib/stores/tools.svelte';
+import { permissionsStore } from '$lib/stores/permissions.svelte';
 import { config } from '$lib/stores/settings.svelte';
 import { agenticStore } from '$lib/stores/agentic.svelte';
 import { mcpStore } from '$lib/stores/mcp.svelte';
@@ -54,7 +55,7 @@ import type {
 	DatabaseMessage,
 	DatabaseMessageExtra
 } from '$lib/types';
-import { ContinueIntentKind, ErrorDialogType, MessageRole, MessageType } from '$lib/enums';
+import { ContinueIntentKind, ErrorDialogType, MessageRole, MessageType, ToolPermissionDecision } from '$lib/enums';
 
 interface ConversationStateEntry {
 	lastAccessed: number;
@@ -1236,6 +1237,105 @@ class ChatStore {
 		this.clearChatStreaming(convId);
 		this.setProcessingState(convId, null);
 		this.clearPendingMessage(convId);
+	}
+	async resumePermission(
+		conversationId: string,
+		messageId: string,
+		toolName: string,
+		serverLabel: string,
+		decision: ToolPermissionDecision
+	) {
+		const permissionKey = toolsStore.getPermissionKey(toolName);
+		if (decision === ToolPermissionDecision.ALWAYS && permissionKey) {
+			permissionsStore.allowTool(permissionKey);
+		} else if (decision === ToolPermissionDecision.ALWAYS_SERVER) {
+			const serverToolKeys = toolsStore.allTools
+				.filter((t) =>
+					t.serverName
+						? t.serverName === serverLabel
+						: toolsStore.getToolServerLabel(t.definition.function.name) === serverLabel
+				)
+				.map((t) => toolsStore.getPermissionKey(t.definition.function.name)!)
+				.filter((k): k is string => k !== null);
+			permissionsStore.allowTools(serverToolKeys);
+		}
+
+		try {
+			const allMessages = await conversationsStore.getConversationMessages(conversationId);
+			const apiOptions = {
+				...this.getApiOptions(),
+				tools: toolsStore.getEnabledToolsForLLM()
+			};
+			const oaiBody = await ChatService.buildOaiRequestBody(allMessages, apiOptions);
+
+			const res = await fetch(`/api/chat/${encodeURIComponent(conversationId)}/resume-permission`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					messageId,
+					decision,
+					messages: oaiBody.messages,
+					options: Object.fromEntries(Object.entries(oaiBody).filter(([k]) => k !== 'messages')),
+					allowedOnceToolName: decision === ToolPermissionDecision.ONCE ? permissionKey : undefined
+				})
+			});
+			if (res.ok) {
+				const data = await res.json();
+				if (data.taskId) {
+					const dbMsg = allMessages.find((m) => m.id === messageId);
+					this.reconnectToTask({
+						conversationId,
+						assistantMessageId: messageId,
+						taskId: data.taskId,
+						accumulatedContent: dbMsg?.content || '',
+						accumulatedReasoning: dbMsg?.reasoningContent || '',
+						resolvedModel: dbMsg?.model || undefined,
+						completionId: dbMsg?.completionId || undefined
+					});
+				}
+			}
+		} catch (err) {
+			console.error('[chatStore] Error resolving tool permission:', err);
+		}
+	}
+
+	async resumeContinue(conversationId: string, messageId: string, shouldContinue: boolean) {
+		try {
+			const allMessages = await conversationsStore.getConversationMessages(conversationId);
+			const apiOptions = {
+				...this.getApiOptions(),
+				tools: toolsStore.getEnabledToolsForLLM()
+			};
+			const oaiBody = await ChatService.buildOaiRequestBody(allMessages, apiOptions);
+
+			const res = await fetch(`/api/chat/${encodeURIComponent(conversationId)}/resume-continue`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					messageId,
+					shouldContinue,
+					messages: oaiBody.messages,
+					options: Object.fromEntries(Object.entries(oaiBody).filter(([k]) => k !== 'messages'))
+				})
+			});
+			if (res.ok) {
+				const data = await res.json();
+				if (data.taskId) {
+					const dbMsg = allMessages.find((m) => m.id === messageId);
+					this.reconnectToTask({
+						conversationId,
+						assistantMessageId: messageId,
+						taskId: data.taskId,
+						accumulatedContent: dbMsg?.content || '',
+						accumulatedReasoning: dbMsg?.reasoningContent || '',
+						resolvedModel: dbMsg?.model || undefined,
+						completionId: dbMsg?.completionId || undefined
+					});
+				}
+			}
+		} catch (err) {
+			console.error('[chatStore] Error resolving continue request:', err);
+		}
 	}
 
 

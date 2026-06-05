@@ -290,16 +290,31 @@ export function sqliteApiPlugin(): Plugin {
                     })();
 
                     if (!result.locked) {
-                        res.status(409).json({ error: 'Permission already resolved or message not found (too bad, someone got there first)' });
+                        res.status(409).json({ error: 'Permission already resolved or message not found' });
                         return;
                     }
 
-                    // In a real flow, here we would read the tool calls, execute the one that was paused,
-                    // write the result to DB, and restart llamaStream.startStream().
-                    // For the scope of the migration, we delegate the execution back to llama-stream
-                    // or handle it inline.
+                    const dbToolCalls = JSON.parse(result.toolCalls || '[]');
+                    const existingResults = db.prepare("SELECT tool_call_id FROM messages WHERE parent = ? AND role = 'tool'").all(messageId) as any[];
+                    const existingToolCallIds = new Set(existingResults.map(r => r.tool_call_id));
+                    const pendingToolCalls = dbToolCalls.filter((tc: any) => !existingToolCallIds.has(tc.id));
 
-                    res.json({ success: true });
+                    const taskId = llamaStream.resumeStream(
+                        {
+                            conversationId,
+                            assistantMessageId: messageId,
+                            requestBody: { messages: req.body.messages, ...req.body.options },
+                            baseUrl: llamaStream.resolveUpstreamConnection().baseUrl,
+                            apiKey: llamaStream.resolveUpstreamConnection().apiKey,
+                        },
+                        {
+                            pendingToolCalls,
+                            allowedOnceKey: req.body.allowedOnceToolName,
+                            denied: decision === 'deny'
+                        }
+                    );
+
+                    res.json({ success: true, taskId });
                 } catch (e: any) {
                     res.status(500).json({ error: e.message });
                 }
@@ -312,8 +327,23 @@ export function sqliteApiPlugin(): Plugin {
                         res.status(400).json({ error: 'messageId and shouldContinue are required' });
                         return;
                     }
-
-                    res.json({ success: true });
+                    if (shouldContinue) {
+                        const taskId = llamaStream.resumeStream(
+                            {
+                                conversationId,
+                                assistantMessageId: messageId,
+                                requestBody: { messages: req.body.messages, ...req.body.options },
+                                baseUrl: llamaStream.resolveUpstreamConnection().baseUrl,
+                                apiKey: llamaStream.resolveUpstreamConnection().apiKey,
+                            }
+                        );
+                        res.json({ success: true, taskId });
+                    } else {
+                        const result = db.transaction(() => {
+                            messages.updateMessage(messageId, { generation_status: 'done' });
+                        })();
+                        res.json({ success: true });
+                    }
                 } catch (e: any) {
                     res.status(500).json({ error: e.message });
                 }

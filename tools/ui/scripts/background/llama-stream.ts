@@ -18,6 +18,7 @@ import {
 	createToolResultMessage,
 	createAssistantMessagePlaceholder
 } from '../sqlite/messages.js';
+import { db } from '../sqlite/db.js';
 import { getConversation } from '../sqlite/conversations.js';
 import { getAllSettings } from '../sqlite/settings.js';
 import * as taskManager from './task-manager.js';
@@ -82,6 +83,38 @@ export function startStream(opts: StartStreamOptions): string {
 	return task.taskId;
 }
 
+export interface ResumeState {
+	pendingToolCalls?: any[];
+	allowedOnceKey?: string;
+	denied?: boolean;
+}
+
+export function resumeStream(opts: StartStreamOptions, resumeState?: ResumeState): string {
+	const task = taskManager.createTask(opts.conversationId, opts.assistantMessageId);
+
+	if (typeof opts.requestBody.model === 'string' && opts.requestBody.model) {
+		task.resolvedModel = opts.requestBody.model;
+	}
+
+	try {
+		const settings = getAllSettings();
+		const configRaw = settings['LlamaUi.config'];
+		if (configRaw) {
+			const cfg = JSON.parse(configRaw);
+			const turns = Number(cfg.agenticMaxTurns);
+			if (turns > 0) task.maxAgenticTurns = turns;
+		}
+	} catch {
+		// Use default
+	}
+
+	runAgenticLoop(task, opts, resumeState).catch((err) => {
+		console.error(`[llama-stream] Unhandled error in task ${task.taskId}:`, err);
+	});
+
+	return task.taskId;
+}
+
 /**
  * Main agentic loop. Runs until:
  * - finish_reason = 'stop' (no tool calls)
@@ -89,7 +122,7 @@ export function startStream(opts: StartStreamOptions): string {
  * - task aborted
  * - error
  */
-async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions): Promise<void> {
+async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions, resumeState?: ResumeState): Promise<void> {
 	const { taskId } = task;
 	console.log(
 		`[llama-stream] Starting task ${taskId} (conv: ${opts.conversationId}, msg: ${opts.assistantMessageId})`
@@ -129,6 +162,17 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 		flushToDB(task);
 	}, DB_FLUSH_INTERVAL_MS);
 
+	// Initialize task accumulated content from DB if it already has some (e.g. on resume continue)
+	try {
+		const existingMsg = db.prepare('SELECT content, reasoning_content FROM messages WHERE id = ?').get(opts.assistantMessageId) as any;
+		if (existingMsg) {
+			task.accumulatedContent = existingMsg.content || '';
+			task.accumulatedReasoning = existingMsg.reasoning_content || '';
+		}
+	} catch (err) {
+		console.warn(`[llama-stream] Failed to read initial content for message ${opts.assistantMessageId}:`, err);
+	}
+
 	// Build running messages array — starts with what was sent from the frontend
 	const runningMessages: unknown[] = Array.isArray(opts.requestBody.messages)
 		? [...(opts.requestBody.messages as unknown[])]
@@ -142,105 +186,147 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 	let lastToolResultMessageId: string | null = null;
 
 	try {
-		// Outer loop: re-enters the inner turn loop when user chooses to continue after hitting the limit
 		let shouldContinueLoop = true;
+		let initialPendingToolCalls = resumeState?.pendingToolCalls || null;
+		const allowedOnceKey = resumeState?.allowedOnceKey;
+
 		while (shouldContinueLoop) {
 			while (task.agenticTurn < task.maxAgenticTurns) {
-			if (task.controller.signal.aborted) break;
+				if (task.controller.signal.aborted) break;
 
 			const isFirstTurn = task.agenticTurn === 0;
 			console.log(
 				`[llama-stream] Task ${taskId}: starting turn ${task.agenticTurn + 1}/${task.maxAgenticTurns}`
 			);
 
-			// For subsequent turns, create a new assistant message placeholder in DB
-			if (!isFirstTurn) {
-				const newMsgId = crypto.randomUUID();
-				const parentId = lastToolResultMessageId || currentAssistantMessageId;
-				createAssistantMessagePlaceholder(opts.conversationId, parentId, newMsgId);
-				currentAssistantMessageId = newMsgId;
-				task.assistantMessageId = newMsgId;
+			let toolCalls: ToolCallAccumulator[] = [];
 
-				// Broadcast assistant_message event to SSE clients
-				sseHub.send(taskId, 'assistant_message', {
-					messageId: newMsgId,
-					parentId
+			if (initialPendingToolCalls && initialPendingToolCalls.length > 0) {
+				if (resumeState?.denied) {
+					// User denied the tool calls — write error results to DB and proceed
+					for (const toolCall of initialPendingToolCalls) {
+						const resultMsg = createToolResultMessage(
+							opts.conversationId,
+							toolCall.id,
+							'Error: Tool execution denied by user',
+							currentAssistantMessageId
+						);
+						lastToolResultMessageId = resultMsg.id;
+
+						sseHub.send(taskId, 'tool_result', {
+							id: toolCall.id,
+							toolName: toolCall.function.name,
+							content: 'Error: Tool execution denied by user',
+							isError: true,
+							messageId: resultMsg.id,
+							parentId: currentAssistantMessageId
+						});
+
+						runningMessages.push({
+							role: 'tool',
+							tool_call_id: toolCall.id,
+							content: 'Error: Tool execution denied by user'
+						});
+					}
+					// Update parent assistant message status to 'done'
+					updateMessage(currentAssistantMessageId, { generation_status: 'done' });
+				} else {
+					// Resuming from permission request: execute them
+					toolCalls = initialPendingToolCalls;
+				}
+				initialPendingToolCalls = null; // Consume so we don't loop infinitely
+				task.agenticTurn++;
+			} else {
+				// --- Normal Generation Flow ---
+				// For subsequent turns, create a new assistant message placeholder in DB
+				if (!isFirstTurn) {
+					const newMsgId = crypto.randomUUID();
+					const parentId = lastToolResultMessageId || currentAssistantMessageId;
+					createAssistantMessagePlaceholder(opts.conversationId, parentId, newMsgId);
+					currentAssistantMessageId = newMsgId;
+					task.assistantMessageId = newMsgId;
+
+					// Broadcast assistant_message event to SSE clients
+					sseHub.send(taskId, 'assistant_message', {
+						messageId: newMsgId,
+						parentId
+					});
+				}
+
+				// Start/Restart the periodic SQLite flush timer if it was cleared
+				if (!task.dbFlushTimer) {
+					task.dbFlushTimer = setInterval(() => {
+						flushToDB(task);
+					}, DB_FLUSH_INTERVAL_MS);
+				}
+
+				// Reset per-turn accumulators
+				task.accumulatedContent = '';
+				task.accumulatedReasoning = '';
+				task.accumulatedToolCalls = '';
+				task.pendingToolCalls = {};
+
+				const requestBody = {
+					...opts.requestBody,
+					messages: runningMessages,
+					tools,
+					stream: true
+				};
+
+				const finishReason = await runSingleCompletion(
+					task,
+					opts,
+					requestBody,
+					currentAssistantMessageId,
+					isFirstTurn
+				);
+
+				task.agenticTurn++;
+
+				if (task.controller.signal.aborted) break;
+
+				// --- No tool calls: we're done ---
+				if (finishReason !== 'tool_calls') {
+					await finalFlush(task, currentAssistantMessageId, 'done');
+					taskManager.markTaskDone(taskId);
+					sseHub.closeTask(taskId);
+					return;
+				}
+
+				// --- Tool calls: extract them ---
+				toolCalls = Object.values(task.pendingToolCalls) as ToolCallAccumulator[];
+				if (toolCalls.length === 0) {
+					// finish_reason said tool_calls but nothing accumulated — treat as done
+					await finalFlush(task, currentAssistantMessageId, 'done');
+					taskManager.markTaskDone(taskId);
+					sseHub.closeTask(taskId);
+					return;
+				}
+
+				// Save the assistant message with tool_calls to DB
+				await flushAssistantWithToolCalls(task, currentAssistantMessageId, toolCalls);
+
+				// Append assistant message to running context
+				runningMessages.push({
+					role: 'assistant',
+					content: task.accumulatedContent || null,
+					reasoning_content: task.accumulatedReasoning || undefined,
+					tool_calls: toolCalls.map((tc) => {
+						let cleanArgs = tc.function.arguments;
+						try {
+							JSON.parse(cleanArgs || '{}');
+						} catch {
+							console.warn(`[llama-stream] Sanitizing malformed tool call arguments: "${cleanArgs}"`);
+							cleanArgs = '{}';
+						}
+						return {
+							id: tc.id,
+							type: tc.type,
+							function: { name: tc.function.name, arguments: cleanArgs }
+						};
+					})
 				});
 			}
-
-			// Start/Restart the periodic SQLite flush timer if it was cleared
-			if (!task.dbFlushTimer) {
-				task.dbFlushTimer = setInterval(() => {
-					flushToDB(task);
-				}, DB_FLUSH_INTERVAL_MS);
-			}
-
-			// Reset per-turn accumulators
-			task.accumulatedContent = '';
-			task.accumulatedReasoning = '';
-			task.accumulatedToolCalls = '';
-			task.pendingToolCalls = {};
-
-			const requestBody = {
-				...opts.requestBody,
-				messages: runningMessages,
-				tools,
-				stream: true
-			};
-
-			const finishReason = await runSingleCompletion(
-				task,
-				opts,
-				requestBody,
-				currentAssistantMessageId,
-				isFirstTurn
-			);
-
-			task.agenticTurn++;
-
-			if (task.controller.signal.aborted) break;
-
-			// --- No tool calls: we're done ---
-			if (finishReason !== 'tool_calls') {
-				await finalFlush(task, currentAssistantMessageId, 'done');
-				taskManager.markTaskDone(taskId);
-				sseHub.closeTask(taskId);
-				return;
-			}
-
-			// --- Tool calls: execute them ---
-			const toolCalls = Object.values(task.pendingToolCalls);
-			if (toolCalls.length === 0) {
-				// finish_reason said tool_calls but nothing accumulated — treat as done
-				await finalFlush(task, currentAssistantMessageId, 'done');
-				taskManager.markTaskDone(taskId);
-				sseHub.closeTask(taskId);
-				return;
-			}
-
-			// Save the assistant message with tool_calls to DB
-			await flushAssistantWithToolCalls(task, currentAssistantMessageId, toolCalls);
-
-			// Append assistant message to running context
-			runningMessages.push({
-				role: 'assistant',
-				content: task.accumulatedContent || null,
-				reasoning_content: task.accumulatedReasoning || undefined,
-				tool_calls: toolCalls.map((tc) => {
-					let cleanArgs = tc.function.arguments;
-					try {
-						JSON.parse(cleanArgs || '{}');
-					} catch {
-						console.warn(`[llama-stream] Sanitizing malformed tool call arguments: "${cleanArgs}"`);
-						cleanArgs = '{}';
-					}
-					return {
-						id: tc.id,
-						type: tc.type,
-						function: { name: tc.function.name, arguments: cleanArgs }
-					};
-				})
-			});
 
 			// Execute each tool call
 			for (const toolCall of toolCalls) {
@@ -302,7 +388,7 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions):
 				const serverLabel = isMcp ? mcpConn!.serverName : 'Built-in Tools';
 
 				// Check permission
-				let isAllowed = toolCtx.allowedTools.has(permissionKey);
+				let isAllowed = toolCtx.allowedTools.has(permissionKey) || allowedOnceKey === permissionKey;
 
 				if (!isAllowed) {
 					// Tool not in always-allowed list — request permission from the browser

@@ -924,6 +924,8 @@ export function agenticStreamingToolCall(conversationId: string) {
 	return agenticStore.streamingToolCall(conversationId);
 }
 
+import { chatStore } from './chat.svelte';
+
 export function agenticResolvePermission(
 	conversationId: string,
 	messageId: string,
@@ -931,12 +933,11 @@ export function agenticResolvePermission(
 	serverLabel: string,
 	decision: ToolPermissionDecision
 ) {
-	agenticStore.resolvePermission(conversationId, messageId, toolName, serverLabel, decision);
+	chatStore.resumePermission(conversationId, messageId, toolName, serverLabel, decision);
 }
 
-
 export function agenticResolveContinue(conversationId: string, messageId: string, shouldContinue: boolean) {
-	agenticStore.resolveContinue(conversationId, messageId, shouldContinue);
+	chatStore.resumeContinue(conversationId, messageId, shouldContinue);
 }
 
 export function agenticHasPendingSteeringMessage(conversationId: string) {

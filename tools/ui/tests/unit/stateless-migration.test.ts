@@ -166,4 +166,88 @@ describe('Stateless Architecture Migration', () => {
         const finalMsg = db.prepare('SELECT generation_status FROM messages WHERE id = ?').get(assistantMsg.id) as any;
         expect(finalMsg.generation_status).toBe('streaming');
     });
+
+    it('should correctly resume and handle denial', async () => {
+        // Mock fetch to simulate next completion after tool denial
+        globalThis.fetch = vi.fn().mockImplementation(async () => {
+            const streamContent = [
+                'data: {"id":"chatcmpl-2","choices":[{"delta":{"content":"Okay, tool denied."}}]}\n\n',
+                'data: [DONE]\n\n'
+            ];
+            let index = 0;
+            const stream = new ReadableStream({
+                start(controller) {
+                    function push() {
+                        if (index < streamContent.length) {
+                            controller.enqueue(new TextEncoder().encode(streamContent[index]));
+                            index++;
+                            setTimeout(push, 10);
+                        } else {
+                            controller.close();
+                        }
+                    }
+                    push();
+                }
+            });
+            return new Response(stream, {
+                status: 200,
+                headers: { 'Content-Type': 'text/event-stream' }
+            });
+        });
+
+        // Set state to waiting_for_permission with a pending tool call
+        updateMessage(assistantMsg.id, {
+            generation_status: 'waiting_for_permission',
+            tool_calls: JSON.stringify([{
+                id: 'call_abc',
+                type: 'function',
+                function: { name: 'test_tool', arguments: '{"arg": 1}' }
+            }])
+        });
+
+        // Resume stream with denied decision
+        const taskId = llamaStream.resumeStream(
+            {
+                conversationId: convId,
+                assistantMessageId: assistantMsg.id,
+                requestBody: { messages: [] },
+                baseUrl: 'http://mock',
+                apiKey: 'mock'
+            },
+            {
+                pendingToolCalls: [{
+                    id: 'call_abc',
+                    type: 'function',
+                    function: { name: 'test_tool', arguments: '{"arg": 1}' }
+                }],
+                denied: true
+            }
+        );
+
+        // Poll until the next assistant message placeholder is created and generation finishes
+        let attempts = 0;
+        let nextAssistantMsg: any = null;
+        while (attempts < 50) {
+            const allMsgs = db.prepare('SELECT * FROM messages WHERE conv_id = ?').all(convId) as any[];
+            nextAssistantMsg = allMsgs.find(m => m.parent !== null && m.role === 'assistant' && m.id !== assistantMsg.id);
+            if (nextAssistantMsg && nextAssistantMsg.generation_status === 'done') {
+                break;
+            }
+            await new Promise(r => setTimeout(r, 50));
+            attempts++;
+        }
+
+        expect(nextAssistantMsg).toBeDefined();
+        expect(nextAssistantMsg.generation_status).toBe('done');
+        expect(nextAssistantMsg.content).toBe('Okay, tool denied.');
+
+        // Verify that the tool result was created and parented correctly
+        const toolResultMsg = db.prepare("SELECT * FROM messages WHERE parent = ? AND role = 'tool'").get(assistantMsg.id) as any;
+        expect(toolResultMsg).toBeDefined();
+        expect(toolResultMsg.content).toContain('Tool execution denied by user');
+        
+        // Parent of the new assistant message should be the tool result message
+        expect(nextAssistantMsg.parent).toBe(toolResultMsg.id);
+    });
 });
+
