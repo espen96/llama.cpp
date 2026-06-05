@@ -159,14 +159,18 @@ export function sqliteApiPlugin(): Plugin {
             /**
              * POST /api/chat
              * Start a background generation task.
-             * Body: { conversationId, messages, options, connectionOverride? }
+             * Body: { conversationId, assistantMessageId, messages?, options?, connectionOverride? }
+             *
+             * Zen path: When messages are omitted, the backend rebuilds the request body
+             * from SQLite using the active message path. This is the preferred mode.
+             *
              * Returns: { taskId, assistantMessageId }
              */
             app.post('/chat', async (req, res) => {
                 try {
-                    const { conversationId, messages: msgs, options = {}, connectionOverride } = req.body;
-                    if (!conversationId || !msgs) {
-                        res.status(400).json({ error: 'conversationId and messages are required' });
+                    const { conversationId, assistantMessageId, messages: msgs, options: bodyOptions, connectionOverride } = req.body;
+                    if (!conversationId || !assistantMessageId) {
+                        res.status(400).json({ error: 'conversationId and assistantMessageId are required' });
                         return;
                     }
                     const conv = conversations.getConversation(conversationId);
@@ -174,20 +178,20 @@ export function sqliteApiPlugin(): Plugin {
                         res.status(404).json({ error: 'Conversation not found' });
                         return;
                     }
-                    // The frontend has already created the user message and assistant placeholder
-                    // via /api/messages/branch. We just need the assistantMessageId from the body.
-                    const { assistantMessageId } = req.body;
-                    if (!assistantMessageId) {
-                        res.status(400).json({ error: 'assistantMessageId is required' });
-                        return;
-                    }
                     // Resolve upstream connection
                     const connection = connectionOverride || llamaStream.resolveUpstreamConnection();
-                    // Build the OAI request body from what the frontend sent
-                    const requestBody = {
-                        messages: msgs,
-                        ...options
-                    };
+
+                    let requestBody;
+                    if (msgs && Array.isArray(msgs) && msgs.length > 0) {
+                        // Legacy path: frontend sent the full message array
+                        requestBody = { messages: msgs, ...bodyOptions };
+                    } else {
+                        // Zen path: backend rebuilds from SQLite
+                        const activePath = messages.getActiveMessagePath(conversationId, assistantMessageId);
+                        const settingsMap = settings.getAllSettings();
+                        requestBody = buildOaiRequestBody(activePath, settingsMap, conversationId);
+                    }
+
                     // Set generation_status to 'streaming' on the placeholder message
                     messages.updateMessage(assistantMessageId, { generation_status: 'streaming' });
                     const taskId = llamaStream.startStream({
@@ -268,6 +272,77 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
+            /**
+             * POST /api/chat/title
+             * Generate a conversation title using the LLM.
+             * Body: { conversationId, userContent, assistantContent, promptTemplate? }
+             * Returns: { title }
+             */
+            app.post('/chat/title', async (req, res) => {
+                try {
+                    const { conversationId, userContent, assistantContent, promptTemplate } = req.body;
+                    if (!conversationId || !userContent) {
+                        res.status(400).json({ error: 'conversationId and userContent are required' });
+                        return;
+                    }
+                    const connection = llamaStream.resolveUpstreamConnection();
+                    const DEFAULT_PROMPT = 'Based on the following interaction, generate a short, concise title (maximum 6-8 words) that captures the main topic. Return ONLY the title text, nothing else. Do not use quotes.\n\nUser: {{USER}}\n\nAssistant: {{ASSISTANT}}\n\nTitle:';
+                    const template = promptTemplate || DEFAULT_PROMPT;
+                    const titlePrompt = template
+                        .replace('{{USER}}', String(userContent || ''))
+                        .replace('{{ASSISTANT}}', String(assistantContent || ''));
+
+                    const requestBody = {
+                        messages: [{ role: 'user', content: titlePrompt }],
+                        stream: true,
+                        max_tokens: 50,
+                        temperature: 0.1
+                    };
+
+                    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+                    if (connection.apiKey) headers['Authorization'] = `Bearer ${connection.apiKey}`;
+
+                    const upstreamRes = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+                        method: 'POST',
+                        headers,
+                        body: JSON.stringify(requestBody)
+                    });
+
+                    if (!upstreamRes.ok) {
+                        res.status(502).json({ error: 'Title generation failed' });
+                        return;
+                    }
+
+                    // Read the SSE stream for the title text
+                    let title = '';
+                    const reader = upstreamRes.body?.getReader();
+                    const decoder = new TextDecoder();
+                    if (reader) {
+                        let buffer = '';
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            buffer += decoder.decode(value, { stream: true });
+                            const lines = buffer.split('\n');
+                            buffer = lines.pop() || '';
+                            for (const line of lines) {
+                                if (!line.startsWith('data:')) continue;
+                                const data = line.slice(5).trim();
+                                if (data === '[DONE]') break;
+                                try {
+                                    const parsed = JSON.parse(data);
+                                    const delta = parsed?.choices?.[0]?.delta;
+                                    if (typeof delta?.content === 'string') title += delta.content;
+                                } catch { /* skip malformed */ }
+                            }
+                        }
+                    }
+
+                    res.json({ title: title.trim() });
+                } catch (e: any) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
             app.post('/chat/:conversationId/resume-permission', async (req, res) => {
                 try {
                     const { conversationId } = req.params;
@@ -304,6 +379,9 @@ export function sqliteApiPlugin(): Plugin {
                     const settingsMap = settings.getAllSettings();
                     const requestBody = buildOaiRequestBody(activePath, settingsMap, conversationId);
 
+                    // Count assistant messages to determine current turn number
+                    const previousTurnCount = activePath.filter((m: any) => m.role === 'assistant').length;
+
                     const taskId = llamaStream.resumeStream(
                         {
                             conversationId,
@@ -315,7 +393,8 @@ export function sqliteApiPlugin(): Plugin {
                         {
                             pendingToolCalls,
                             allowedOnceKey: req.body.allowedOnceToolName,
-                            denied: decision === 'deny'
+                            denied: decision === 'deny',
+                            previousTurnCount
                         }
                     );
 
@@ -337,6 +416,9 @@ export function sqliteApiPlugin(): Plugin {
                         const settingsMap = settings.getAllSettings();
                         const requestBody = buildOaiRequestBody(activePath, settingsMap, conversationId);
 
+                        // Count assistant messages to determine current turn number
+                        const previousTurnCount = activePath.filter((m: any) => m.role === 'assistant').length;
+
                         const taskId = llamaStream.resumeStream(
                             {
                                 conversationId,
@@ -344,7 +426,8 @@ export function sqliteApiPlugin(): Plugin {
                                 requestBody,
                                 baseUrl: llamaStream.resolveUpstreamConnection().baseUrl,
                                 apiKey: llamaStream.resolveUpstreamConnection().apiKey,
-                            }
+                            },
+                            { previousTurnCount }
                         );
                         res.json({ success: true, taskId });
                     } else {

@@ -318,16 +318,34 @@ class ChatStore {
 					}
 					this.setChatReasoning(convId, true);
 				},
-				onComplete: async (content: string, reasoningContent?: string) => {
-					// Guard against double-complete (done event + [DONE] chunk both calling finalize)
-					if (!this.chatActiveTaskIds.has(convId)) return;
-					this.chatActiveTaskIds.delete(convId);
+			onTimings: (timings?: ChatMessageTimings, promptProgress?: ChatMessagePromptProgress) => {
+				const tokensPerSecond =
+					timings?.predicted_ms && timings?.predicted_n
+						? (timings.predicted_n / timings.predicted_ms) * 1000
+						: 0;
+				this.updateProcessingStateFromTimings(
+					{
+						prompt_n: timings?.prompt_n || 0,
+						prompt_ms: timings?.prompt_ms,
+						predicted_n: timings?.predicted_n || 0,
+						predicted_per_second: tokensPerSecond,
+						cache_n: timings?.cache_n || 0,
+						prompt_progress: promptProgress
+					},
+					convId
+				);
+			},
+			onComplete: async (content: string, reasoningContent?: string, timings?: ChatMessageTimings) => {
+				// Guard against double-complete (done event + [DONE] chunk both calling finalize)
+				if (!this.chatActiveTaskIds.has(convId)) return;
+				this.chatActiveTaskIds.delete(convId);
 					const idx = conversationsStore.findMessageIndex(messageId);
 					if (idx !== -1) {
 						const uiUpdate: Partial<DatabaseMessage> = {
 							content,
 							reasoningContent: reasoningContent || undefined
 						};
+						if (timings) uiUpdate.timings = timings;
 						try {
 							const allMessages = await conversationsStore.getConversationMessages(convId);
 							const dbMsg = allMessages.find((m) => m.id === messageId);
@@ -1076,33 +1094,24 @@ class ChatStore {
 		// to SQLite regardless of whether this SSE connection stays open.
 		await mcpStore.ensureInitialized(perChatOverrides).catch(console.error);
 
-		const apiOptions = {
-			...this.getApiOptions(),
-			...(effectiveModel ? { model: effectiveModel } : {}),
-			tools: toolsStore.getEnabledToolsForLLM()
-		};
-
-		const oaiBody = await ChatService.buildOaiRequestBody(allMessages, apiOptions);
-
+		// Zen path: Send only conversationId + assistantMessageId.
+		// The backend reconstructs the full request body from SQLite.
 		await new Promise<void>((resolve) => {
 			const handle = startBackgroundChat(
 				{
 					conversationId: convId,
-					assistantMessageId: assistantMessage.id,
-					messages: (oaiBody.messages as unknown[]) ?? [],
-					options: Object.fromEntries(
-						Object.entries(oaiBody).filter(([k]) => k !== 'messages')
-					)
+					assistantMessageId: assistantMessage.id
 				},
 				{
-					onTaskId: (taskId: string) => {
-						this.chatActiveTaskIds.set(convId, taskId);
-					},
-					onChunk: streamCallbacks.onChunk,
-					onReasoningChunk: streamCallbacks.onReasoningChunk,
-					onToolCallChunk: streamCallbacks.onToolCallsStreaming,
-					onModel: streamCallbacks.onModel,
-					onCompletionId: streamCallbacks.onCompletionId,
+				onTaskId: (taskId: string) => {
+					this.chatActiveTaskIds.set(convId, taskId);
+				},
+				onChunk: streamCallbacks.onChunk,
+				onReasoningChunk: streamCallbacks.onReasoningChunk,
+				onToolCallChunk: streamCallbacks.onToolCallsStreaming,
+				onModel: streamCallbacks.onModel,
+				onCompletionId: streamCallbacks.onCompletionId,
+				onTimings: streamCallbacks.onTimings,
 					onAssistantMessageCreated: (messageId: string, parentId: string) => {
 						const newMsg: DatabaseMessage = {
 							id: messageId,
@@ -1136,16 +1145,17 @@ class ChatStore {
 						conversationsStore.addMessageToActive(newMsg);
 						conversationsStore.updateCurrentNode(messageId).catch(console.error);
 					},
-					onComplete: async (content: string, reasoningContent?: string) => {
-						// Guard against double-complete (done event + [DONE] chunk both calling finalize)
-						if (!this.chatActiveTaskIds.has(convId)) return;
-						this.chatActiveTaskIds.delete(convId);
-						// The backend has already written to SQLite; we just update the UI
-						const idx = conversationsStore.findMessageIndex(currentMessageId);
-						const uiUpdate: Partial<DatabaseMessage> = {
-							content,
-							reasoningContent: reasoningContent || undefined
-						};
+				onComplete: async (content: string, reasoningContent?: string, timings?: ChatMessageTimings) => {
+					// Guard against double-complete (done event + [DONE] chunk both calling finalize)
+					if (!this.chatActiveTaskIds.has(convId)) return;
+					this.chatActiveTaskIds.delete(convId);
+					// The backend has already written to SQLite; we just update the UI
+					const idx = conversationsStore.findMessageIndex(currentMessageId);
+					const uiUpdate: Partial<DatabaseMessage> = {
+						content,
+						reasoningContent: reasoningContent || undefined
+					};
+					if (timings) uiUpdate.timings = timings;
 
 						// Fetch the final generation_status from DB to sync UI (e.g. waiting_for_permission)
 						try {
@@ -1329,7 +1339,6 @@ class ChatStore {
 		assistantContent: string,
 		convId: string
 	): Promise<void> {
-		const effectiveModel = isRouterMode() && selectedModelName() ? selectedModelName() : undefined;
 		const configValue = config();
 		const titlePromptTemplate =
 			typeof configValue.titleGenerationPrompt === 'string' &&
@@ -1337,32 +1346,37 @@ class ChatStore {
 				? configValue.titleGenerationPrompt
 				: TITLE_GENERATION.DEFAULT_PROMPT;
 
-		const titlePrompt = titlePromptTemplate
-			.replace('{{USER}}', String(userContent || ''))
-			.replace('{{ASSISTANT}}', String(assistantContent || ''));
+		try {
+			const resp = await fetch('/api/chat/title', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					conversationId: convId,
+					userContent,
+					assistantContent,
+					promptTemplate: titlePromptTemplate
+				})
+			});
 
-		const titleMessage: ApiChatMessageData = {
-			role: MessageRole.USER,
-			content: titlePrompt
-		};
+			if (!resp.ok) return;
 
-		const titleResponse = await ChatService.generateTitle(titleMessage, effectiveModel);
+			const { title: titleResponse } = await resp.json();
+			if (!titleResponse) return;
 
-		if (!titleResponse) {
-			return;
-		}
-
-		let cleanTitle = titleResponse.trim();
-		cleanTitle = cleanTitle
-			.replace(TITLE_GENERATION.PREFIX_PATTERN, '')
-			.replace(TITLE_GENERATION.QUOTE_PATTERN, '')
-			.trim();
-		if (!cleanTitle || cleanTitle.length < TITLE_GENERATION.MIN_LENGTH) {
-			const firstLine = userContent.split('\n').find((l) => l.trim().length > 0);
-			cleanTitle = firstLine ? firstLine.trim() : TITLE_GENERATION.FALLBACK;
-		}
-		if (cleanTitle && cleanTitle.length >= TITLE_GENERATION.MIN_LENGTH) {
-			await conversationsStore.updateConversationName(convId, cleanTitle);
+			let cleanTitle = titleResponse.trim();
+			cleanTitle = cleanTitle
+				.replace(TITLE_GENERATION.PREFIX_PATTERN, '')
+				.replace(TITLE_GENERATION.QUOTE_PATTERN, '')
+				.trim();
+			if (!cleanTitle || cleanTitle.length < TITLE_GENERATION.MIN_LENGTH) {
+				const firstLine = userContent.split('\n').find((l) => l.trim().length > 0);
+				cleanTitle = firstLine ? firstLine.trim() : TITLE_GENERATION.FALLBACK;
+			}
+			if (cleanTitle && cleanTitle.length >= TITLE_GENERATION.MIN_LENGTH) {
+				await conversationsStore.updateConversationName(convId, cleanTitle);
+			}
+		} catch (e) {
+			console.error('[chatStore] Title generation failed:', e);
 		}
 	}
 
@@ -1709,8 +1723,8 @@ class ChatStore {
 			this.setChatLoading(activeConv.id, true);
 			this.clearChatStreaming(activeConv.id);
 
-			const allMessages = await conversationsStore.getConversationMessages(activeConv.id);
-			const dbMessage = findMessageById(allMessages, messageId);
+			const dbMessage = (await conversationsStore.getConversationMessages(activeConv.id))
+				.find((m) => m.id === messageId);
 
 			if (!dbMessage) {
 				this.setChatLoading(activeConv.id, false);
@@ -1719,42 +1733,47 @@ class ChatStore {
 
 			const originalContent = dbMessage.content;
 			const originalReasoning = dbMessage.reasoningContent || '';
-			// Hand the persisted DatabaseMessage straight to sendMessage so its
-			// internal converter preserves tool_calls and extras when present.
-			// Reconstructing a bare {role, content} here would drop those fields
-			// and break continue_final_message for messages with tool calls.
-			const contextWithContinue = conversationsStore.activeMessages.slice(0, idx + 1);
 
-			let appendedContent = '';
-			let appendedReasoning = '';
-			let hasReceivedContent = false;
+			// Zen path: Route continuation through the backend.
+			// The backend owns the upstream connection and persists to SQLite.
+			const resp = await fetch(`/api/chat/${activeConv.id}/resume-continue`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ messageId, shouldContinue: true })
+			});
 
-			const updateStreamingContent = (fullContent: string) => {
-				this.setChatStreaming(msg.convId, fullContent, msg.id);
-				conversationsStore.updateMessageAtIndex(idx, { content: fullContent });
-			};
+			if (!resp.ok) {
+				this.setChatLoading(activeConv.id, false);
+				return;
+			}
 
-			const abortController = this.getOrCreateAbortController(msg.convId);
+			const { taskId } = await resp.json();
+			this.chatActiveTaskIds.set(activeConv.id, taskId);
 
-			await ChatService.sendMessage(
-				contextWithContinue,
+			const handle = reconnectBackgroundChat(
+				taskId,
+				originalContent,
+				originalReasoning,
 				{
-					...this.getApiOptions(),
-					continueFinalMessage: true,
 					onChunk: (chunk: string) => {
-						appendedContent += chunk;
-						hasReceivedContent = true;
-						updateStreamingContent(originalContent + appendedContent);
+						this.setChatStreaming(msg.convId, originalContent + chunk, msg.id);
+						const idx = conversationsStore.findMessageIndex(msg.id);
+						if (idx !== -1) {
+							conversationsStore.updateMessageAtIndex(idx, {
+								content: originalContent + chunk
+							});
+						}
 						this.setChatReasoning(msg.convId, false);
 					},
 					onReasoningChunk: (chunk: string) => {
-						appendedReasoning += chunk;
-						hasReceivedContent = true;
-						// mark streaming state so a stop mid-thinking can persist the partial reasoning
-						this.setChatStreaming(msg.convId, originalContent + appendedContent, msg.id);
-						conversationsStore.updateMessageAtIndex(idx, {
-							reasoningContent: originalReasoning + appendedReasoning
-						});
+						this.setChatStreaming(msg.convId, originalContent, msg.id);
+						const idx = conversationsStore.findMessageIndex(msg.id);
+						if (idx !== -1) {
+							const msg2 = conversationsStore.activeMessages[idx];
+							conversationsStore.updateMessageAtIndex(idx, {
+								reasoningContent: (msg2.reasoningContent || '') + chunk
+							});
+						}
 						this.setChatReasoning(msg.convId, true);
 					},
 					onTimings: (timings?: ChatMessageTimings, promptProgress?: ChatMessagePromptProgress) => {
@@ -1774,77 +1793,77 @@ class ChatStore {
 							msg.convId
 						);
 					},
-					onComplete: async (
-						finalContent?: string,
-						reasoningContent?: string,
-						timings?: ChatMessageTimings
-					) => {
-						const finalAppendedContent = hasReceivedContent ? appendedContent : finalContent || '';
-						const finalAppendedReasoning = hasReceivedContent
-							? appendedReasoning
-							: reasoningContent || '';
-						const fullContent = originalContent + finalAppendedContent;
-						const fullReasoning = originalReasoning + finalAppendedReasoning || undefined;
-
-						await DatabaseService.updateMessage(msg.id, {
-							content: fullContent,
-							reasoningContent: fullReasoning,
+					onAssistantMessageCreated: (newMsgId: string, parentId: string) => {
+						const newMsg: DatabaseMessage = {
+							id: newMsgId,
+							convId: activeConv.id,
+							type: MessageType.TEXT,
+							role: MessageRole.ASSISTANT,
+							content: '',
 							timestamp: Date.now(),
-							timings
-						});
-
-						conversationsStore.updateMessageAtIndex(idx, {
-							content: fullContent,
-							reasoningContent: fullReasoning,
-							timestamp: Date.now(),
-							timings
-						});
-
-						conversationsStore.updateConversationTimestamp();
-
-						this.setChatLoading(msg.convId, false);
-						this.clearChatStreaming(msg.convId);
-						this.setProcessingState(msg.convId, null);
+							toolCalls: '',
+							children: [],
+							parent: parentId
+						};
+						conversationsStore.addMessageToActive(newMsg);
 					},
-					onError: async (error: Error) => {
-						if (isAbortError(error)) {
-							if (hasReceivedContent && appendedContent) {
-								await DatabaseService.updateMessage(msg.id, {
-									content: originalContent + appendedContent,
-									reasoningContent: originalReasoning + appendedReasoning || undefined,
-									timestamp: Date.now()
-								});
+					onToolResultCreated: (messageId2: string, toolCallId: string, content: string, parentId: string) => {
+						const newMsg: DatabaseMessage = {
+							id: messageId2,
+							convId: activeConv.id,
+							type: MessageType.TEXT,
+							role: MessageRole.TOOL,
+							content,
+							toolCallId,
+							timestamp: Date.now(),
+							toolCalls: '',
+							children: [],
+							parent: parentId
+						};
+						conversationsStore.addMessageToActive(newMsg);
+						conversationsStore.updateCurrentNode(messageId2).catch(console.error);
+					},
+					onToolCallChunk: (toolCalls: any) => {
+						const idx = conversationsStore.findMessageIndex(msg.id);
+						if (idx !== -1) {
+							conversationsStore.updateMessageAtIndex(idx, {
+								toolCalls: JSON.stringify(toolCalls)
+							});
+						}
+					},
+					onComplete: async (content: string, reasoningContent?: string, timings?: ChatMessageTimings) => {
+						if (!this.chatActiveTaskIds.has(activeConv.id)) return;
+						this.chatActiveTaskIds.delete(activeConv.id);
 
-								conversationsStore.updateMessageAtIndex(idx, {
-									content: originalContent + appendedContent,
-									reasoningContent: originalReasoning + appendedReasoning || undefined,
-									timestamp: Date.now()
-								});
+						// Backend has written to SQLite — sync UI from DB
+						try {
+							const allMessages = await conversationsStore.getConversationMessages(activeConv.id);
+							const dbMsg = allMessages.find((m) => m.id === msg.id);
+							if (dbMsg) {
+								const uiUpdate: Partial<DatabaseMessage> = {
+									content: dbMsg.content,
+									reasoningContent: dbMsg.reasoningContent || undefined
+								};
+								if (dbMsg.generation_status) uiUpdate.generation_status = dbMsg.generation_status;
+								if (dbMsg.toolCalls) uiUpdate.toolCalls = dbMsg.toolCalls;
+								if (timings) uiUpdate.timings = timings;
+								conversationsStore.updateMessageAtIndex(idx, uiUpdate);
 							}
-
-							this.setChatLoading(msg.convId, false);
-							this.clearChatStreaming(msg.convId);
-							this.setProcessingState(msg.convId, null);
-
-							return;
+						} catch (e) {
+							console.error('[chatStore] Failed to sync continuation result from DB:', e);
 						}
 
+						conversationsStore.updateConversationTimestamp();
+						this.setChatLoading(activeConv.id, false);
+						this.clearChatStreaming(activeConv.id);
+						this.setProcessingState(activeConv.id, null);
+					},
+					onError: async (error: Error) => {
+						this.chatActiveTaskIds.delete(activeConv.id);
 						console.error('Continue generation error:', error);
-						// keep whatever was appended so far, the message stays in memory and in DB
-						await DatabaseService.updateMessage(msg.id, {
-							content: originalContent + appendedContent,
-							reasoningContent: originalReasoning + appendedReasoning || undefined,
-							timestamp: Date.now()
-						});
-						conversationsStore.updateMessageAtIndex(idx, {
-							content: originalContent + appendedContent,
-							reasoningContent: originalReasoning + appendedReasoning || undefined,
-							timestamp: Date.now()
-						});
-
-						this.setChatLoading(msg.convId, false);
-						this.clearChatStreaming(msg.convId);
-						this.setProcessingState(msg.convId, null);
+						this.setChatLoading(activeConv.id, false);
+						this.clearChatStreaming(activeConv.id);
+						this.setProcessingState(activeConv.id, null);
 						this.showErrorDialog({
 							type:
 								error.name === 'TimeoutError' ? ErrorDialogType.TIMEOUT : ErrorDialogType.SERVER,
@@ -1852,14 +1871,11 @@ class ChatStore {
 						});
 					}
 				},
-
-				msg.convId,
-				abortController.signal,
-				msg.id
+				undefined
 			);
 		} catch (error) {
-			if (!isAbortError(error)) console.error('Failed to continue message:', error);
-			if (activeConv) this.setChatLoading(activeConv.id, false);
+			if (!isAbortError(error)) console.error('Failed to continue agentic turn:', error);
+			this.setChatLoading(activeConv.id, false);
 		}
 	}
 

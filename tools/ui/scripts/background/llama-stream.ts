@@ -181,6 +181,8 @@ export interface ResumeState {
 	pendingToolCalls?: any[];
 	allowedOnceKey?: string;
 	denied?: boolean;
+	/** Turn count from before the pause — preserves agenticTurn across resume cycles */
+	previousTurnCount?: number;
 }
 
 export function resumeStream(opts: StartStreamOptions, resumeState?: ResumeState): string {
@@ -200,6 +202,11 @@ export function resumeStream(opts: StartStreamOptions, resumeState?: ResumeState
 		}
 	} catch {
 		// Use default
+	}
+
+	// Preserve turn count across resume cycles so maxAgenticTurns is per-conversation, not per-resume
+	if (resumeState?.previousTurnCount !== undefined) {
+		task.agenticTurn = resumeState.previousTurnCount;
 	}
 
 	runAgenticLoop(task, opts, resumeState).catch((err) => {
@@ -678,6 +685,9 @@ function processLine(
 		if (parsed.id && !task.completionId) {
 			task.completionId = parsed.id;
 		}
+		if (parsed.timings) {
+			task.accumulatedTimings = parsed.timings;
+		}
 
 		// Sanitize model name in broadcast
 		if (task.resolvedModel) {
@@ -827,6 +837,9 @@ async function finalFlush(
 		}
 		if (task.accumulatedToolCalls) {
 			update.toolCalls = task.accumulatedToolCalls;
+		}
+		if (task.accumulatedTimings) {
+			update.timings = task.accumulatedTimings;
 		}
 		updateMessage(assistantMessageId, update);
 	} catch (err) {

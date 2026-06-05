@@ -31,6 +31,8 @@ export interface Task {
     accumulatedReasoning: string;
     /** Accumulated tool call json string */
     accumulatedToolCalls: string;
+    /** Last timings received from upstream (written to DB on completion) */
+    accumulatedTimings: Record<string, unknown> | null;
     resolvedModel: string | null;
     completionId: string | null;
     createdAt: number;
@@ -66,6 +68,7 @@ export function createTask(
         accumulatedContent: '',
         accumulatedReasoning: '',
         accumulatedToolCalls: '',
+        accumulatedTimings: null,
         resolvedModel: null,
         completionId: null,
         createdAt: Date.now(),

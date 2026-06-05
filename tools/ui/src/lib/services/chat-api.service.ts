@@ -14,10 +14,10 @@ import type { ChatMessageTimings } from '$lib/types/chat';
 export interface BackgroundChatRequest {
 	conversationId: string;
 	assistantMessageId: string;
-	/** Already-normalized OAI messages array */
-	messages: unknown[];
-	/** All other OAI completion params (model, temperature, tools, etc.) */
-	options: Record<string, unknown>;
+	/** When omitted, the backend rebuilds the request body from SQLite (Zen path). */
+	messages?: unknown[];
+	/** When omitted, the backend reads options from settings (Zen path). */
+	options?: Record<string, unknown>;
 	/** Optional connection override (baseUrl + apiKey) */
 	connectionOverride?: { baseUrl: string; apiKey: string };
 }
@@ -36,7 +36,7 @@ export interface ChatStreamCallbacksBackground {
 	onModel?: (model: string) => void;
 	onCompletionId?: (id: string) => void;
 	onTimings?: (timings: ChatMessageTimings) => void;
-	onComplete?: (content: string, reasoningContent?: string) => Promise<void>;
+	onComplete?: (content: string, reasoningContent?: string, timings?: ChatMessageTimings) => Promise<void>;
 	onError?: (error: Error) => void;
 	onAssistantMessageCreated?: (messageId: string, parentId: string) => void;
 	onToolResultCreated?: (messageId: string, toolCallId: string, content: string, parentId: string) => void;
@@ -57,6 +57,7 @@ export function startBackgroundChat(
 	// We track accumulated content here so onComplete gets the full text.
 	let accumulatedContent = '';
 	let accumulatedReasoning = '';
+	let lastTimings: ChatMessageTimings | undefined;
 	let finalized = false;
 
 	// Track ongoing tool calls across deltas (mirrors chat.service.ts logic)
@@ -253,14 +254,14 @@ export function startBackgroundChat(
 			// Parse timings from timings field if present
 			if (parsed.timings) {
 				const t = parsed.timings;
-				const timings: ChatMessageTimings = {
+				lastTimings = {
 					prompt_n: t.prompt_n ?? 0,
 					prompt_ms: t.prompt_ms,
 					predicted_n: t.predicted_n ?? 0,
 					predicted_ms: t.predicted_ms,
 					cache_n: t.cache_n ?? 0
 				};
-				callbacks.onTimings?.(timings);
+				callbacks.onTimings?.(lastTimings);
 			}
 		} catch {
 			// Malformed SSE chunk, skip
@@ -271,7 +272,7 @@ export function startBackgroundChat(
 		if (finalized) return;
 		finalized = true;
 		callbacks
-			.onComplete?.(accumulatedContent, accumulatedReasoning || undefined)
+			.onComplete?.(accumulatedContent, accumulatedReasoning || undefined, lastTimings)
 			.catch((err) => callbacks.onError?.(err instanceof Error ? err : new Error(String(err))));
 	}
 
@@ -298,6 +299,7 @@ export function reconnectBackgroundChat(
 	let eventSource: EventSource | null = null;
 	let accumulatedContent = initialContent;
 	let accumulatedReasoning = initialReasoning;
+	let lastTimings: ChatMessageTimings | undefined;
 	let finalized = false;
 
 	const pendingToolCalls: Record<
@@ -454,14 +456,14 @@ export function reconnectBackgroundChat(
 
 			if (parsed.timings) {
 				const t = parsed.timings;
-				const timings: ChatMessageTimings = {
+				lastTimings = {
 					prompt_n: t.prompt_n ?? 0,
 					prompt_ms: t.prompt_ms,
 					predicted_n: t.predicted_n ?? 0,
 					predicted_ms: t.predicted_ms,
 					cache_n: t.cache_n ?? 0
 				};
-				callbacks.onTimings?.(timings);
+				callbacks.onTimings?.(lastTimings);
 			}
 		} catch {
 			// Malformed chunk
@@ -472,7 +474,7 @@ export function reconnectBackgroundChat(
 		if (finalized) return;
 		finalized = true;
 		callbacks
-			.onComplete?.(accumulatedContent, accumulatedReasoning || undefined)
+			.onComplete?.(accumulatedContent, accumulatedReasoning || undefined, lastTimings)
 			.catch((err) => callbacks.onError?.(err instanceof Error ? err : new Error(String(err))));
 	}
 
