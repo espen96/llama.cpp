@@ -625,7 +625,7 @@ async function flushAssistantWithToolCalls(
 async function finalFlush(
 	task: taskManager.Task,
 	assistantMessageId: string,
-	status: 'done' | 'error'
+	status: 'done' | 'error' | 'waiting_for_continue' | 'waiting_for_permission'
 ): Promise<void> {
 	if (task.dbFlushTimer) {
 		clearInterval(task.dbFlushTimer);

@@ -330,8 +330,9 @@ class ChatStore {
 						try {
 							const allMessages = await conversationsStore.getConversationMessages(convId);
 							const dbMsg = allMessages.find((m) => m.id === messageId);
-							if (dbMsg?.generation_status) {
-								uiUpdate.generation_status = dbMsg.generation_status;
+							if (dbMsg) {
+								if (dbMsg.generation_status) uiUpdate.generation_status = dbMsg.generation_status;
+								if (dbMsg.toolCalls) uiUpdate.toolCalls = dbMsg.toolCalls;
 							}
 						} catch (e) {
 							console.error('[chatStore] Failed to fetch final message status from DB on reconnect:', e);
@@ -1148,8 +1149,9 @@ class ChatStore {
 						try {
 							const allMessages = await conversationsStore.getConversationMessages(convId);
 							const dbMsg = allMessages.find((m) => m.id === currentMessageId);
-							if (dbMsg?.generation_status) {
-								uiUpdate.generation_status = dbMsg.generation_status;
+							if (dbMsg) {
+								if (dbMsg.generation_status) uiUpdate.generation_status = dbMsg.generation_status;
+								if (dbMsg.toolCalls) uiUpdate.toolCalls = dbMsg.toolCalls;
 							}
 						} catch (e) {
 							console.error('[chatStore] Failed to fetch final message status from DB:', e);

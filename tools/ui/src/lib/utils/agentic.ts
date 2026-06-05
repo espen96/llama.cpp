@@ -67,10 +67,10 @@ function deriveSingleTurnSections(
 	const toolCalls = parseToolCalls(message.toolCalls);
 	for (const tc of toolCalls) {
 		const resultMsg = toolMessages.find((m) => m.toolCallId === tc.id);
-		// Only show as pending/loading if we're actively streaming; otherwise it's just a tool call without result
+		const isPending = isStreaming || message.generation_status === 'waiting_for_permission';
 		const type = resultMsg
 			? AgenticSectionType.TOOL_CALL
-			: isStreaming
+			: isPending
 				? AgenticSectionType.TOOL_CALL_PENDING
 				: AgenticSectionType.TOOL_CALL;
 		sections.push({

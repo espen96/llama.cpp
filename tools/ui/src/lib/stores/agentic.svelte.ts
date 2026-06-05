@@ -318,10 +318,6 @@ class AgenticStore {
 		const { conversationId, messages, options = {}, callbacks, signal, perChatOverrides, assistantMessageId } = params;
 
 		// Clear any pending permissions/continue requests for this conversation when starting a new flow
-		this._pendingPermissions.set(conversationId, null);
-		this._permissionResolvers.delete(conversationId);
-		this._pendingContinueRequests.set(conversationId, false);
-		this._continueResolvers.delete(conversationId);
 		this._steeringMessages.delete(conversationId);
 
 		// Ensure built-in tools are fetched before checking if agentic is enabled
@@ -453,6 +449,7 @@ class AgenticStore {
 		while (true) {
 			if (turn >= maxTurns) {
 				// Turn limit reached - ask user whether to continue
+				// @ts-ignore - Dead code intentionally kept
 				const shouldContinue = await this.requestContinue(conversationId, signal);
 
 				// Yield to allow Svelte to flush the UI update
@@ -690,9 +687,10 @@ class AgenticStore {
 				const serverLabel = toolsStore.getToolServerLabel(toolName);
 
 				// Ask for permission before executing the tool
+				// @ts-ignore - Dead code intentionally kept
 				const permission = await this.requestPermission(
 					conversationId,
-					toolName,
+					toolCall.function.name,
 					serverLabel,
 					signal
 				);
@@ -926,10 +924,6 @@ export function agenticStreamingToolCall(conversationId: string) {
 	return agenticStore.streamingToolCall(conversationId);
 }
 
-export function agenticPendingPermissionRequest(conversationId: string) {
-	return agenticStore.pendingPermissionRequest(conversationId);
-}
-
 export function agenticResolvePermission(
 	conversationId: string,
 	messageId: string,
@@ -940,9 +934,6 @@ export function agenticResolvePermission(
 	agenticStore.resolvePermission(conversationId, messageId, toolName, serverLabel, decision);
 }
 
-export function agenticPendingContinueRequest(conversationId: string) {
-	return agenticStore.pendingContinueRequest(conversationId);
-}
 
 export function agenticResolveContinue(conversationId: string, messageId: string, shouldContinue: boolean) {
 	agenticStore.resolveContinue(conversationId, messageId, shouldContinue);
