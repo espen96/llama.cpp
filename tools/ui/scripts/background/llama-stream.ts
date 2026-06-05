@@ -29,6 +29,100 @@ import type { McpConnectionMap } from './mcp-session-manager.js';
 import { executeTool } from './tool-executor.js';
 import type { ToolContext } from './tool-executor.js';
 import crypto from 'crypto';
+async function fetchTools(baseUrl: string): Promise<any[]> {
+    try {
+        const url = `${baseUrl.replace(/\/$/, '')}/tools`;
+        const res = await fetch(url);
+        if (!res.ok) return [];
+        const parsed = await res.json();
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+const EXECUTE_JAVASCRIPT_TOOL = {
+	type: 'function',
+	function: {
+		name: 'execute_javascript',
+		description:
+			'Executes Javascript code on the server side in a safe, restricted sandbox. Can be used for calculations, data transformations, or logic tests. Returns the result of the last evaluated expression or a string representation of the output.',
+		parameters: {
+			type: 'object',
+			properties: {
+				code: {
+					type: 'string',
+					description:
+						'The Javascript code to execute. Must not rely on any external APIs, network access, or file system access.'
+				}
+			},
+			required: ['code']
+		}
+	}
+};
+
+async function buildBackendToolsList(
+    baseUrl: string,
+    mcpConnections: McpConnectionMap,
+    disabledTools: Set<string>,
+    settings: Record<string, string>
+): Promise<any[] | undefined> {
+    const tools: any[] = [];
+
+    // 1. Fetch built-in tools from llama-server
+    try {
+        const serverTools = await fetchTools(baseUrl);
+        for (const t of serverTools) {
+            if (t?.definition?.function?.name && !disabledTools.has(t.definition.function.name)) {
+                tools.push(t.definition);
+            }
+        }
+    } catch (err) {
+        console.warn('[llama-stream] Failed to fetch built-in tools:', err);
+    }
+
+    // 2. Append execute_javascript if not disabled
+    if (!disabledTools.has('execute_javascript')) {
+        tools.push(EXECUTE_JAVASCRIPT_TOOL);
+    }
+
+    // 3. Append MCP tools
+    for (const conn of mcpConnections.values()) {
+        for (const mcpTool of conn.tools || []) {
+            if (!disabledTools.has(mcpTool.name)) {
+                tools.push({
+                    type: 'function',
+                    function: {
+                        name: mcpTool.name,
+                        description: mcpTool.description,
+                        parameters: mcpTool.inputSchema || { type: 'object', properties: {} }
+                    }
+                });
+            }
+        }
+    }
+
+    // 4. Append custom tools from settings
+    try {
+        const configRaw = settings['LlamaUi.config'];
+        if (configRaw) {
+            const cfg = JSON.parse(configRaw);
+            const customJson = cfg.customJson;
+            if (customJson) {
+                const parsed = typeof customJson === 'string' ? JSON.parse(customJson) : customJson;
+                if (Array.isArray(parsed)) {
+                    for (const t of parsed) {
+                        if (t?.type === 'function' && t.function?.name && !disabledTools.has(t.function.name)) {
+                            tools.push(t);
+                        }
+                    }
+                }
+            }
+        }
+    } catch {}
+
+    return tools.length > 0 ? tools : undefined;
+}
 
 /** Throttle DB writes to this interval (ms). Keeps write rate low even at 400 tps. */
 const DB_FLUSH_INTERVAL_MS = 500;
@@ -178,8 +272,8 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions, 
 		? [...(opts.requestBody.messages as unknown[])]
 		: [];
 
-	// Tools array from the request (what the frontend already assembled)
-	const tools = opts.requestBody.tools;
+	// Gather and build tools list entirely backend-side
+	const tools = await buildBackendToolsList(opts.baseUrl, mcpConnections, disabledTools, settings);
 	// Track the current "parent" message ID for tool result messages
 	let currentAssistantMessageId = opts.assistantMessageId;
 	// Track the last tool result message ID so the next assistant turn can be parented correctly

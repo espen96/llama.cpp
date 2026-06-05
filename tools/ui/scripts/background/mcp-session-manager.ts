@@ -37,6 +37,8 @@ export interface McpConnection {
     serverName: string;
     /** Tool names this server provides */
     toolNames: Set<string>;
+    /** Full tool definitions returned by listTools() */
+    tools: any[];
 }
 
 export type McpConnectionMap = Map<string, McpConnection>;
@@ -110,9 +112,11 @@ async function connectOne(server: McpServerEntry): Promise<McpConnection> {
 
     // Discover tools
     const toolNames = new Set<string>();
+    let tools: any[] = [];
     try {
         const result = await client.listTools();
-        for (const tool of result.tools ?? []) {
+        tools = result.tools ?? [];
+        for (const tool of tools) {
             toolNames.add(tool.name);
         }
     } catch (err) {
@@ -122,7 +126,7 @@ async function connectOne(server: McpServerEntry): Promise<McpConnection> {
         );
     }
 
-    return { client, serverId: server.id, serverName: server.name, toolNames };
+    return { client, serverId: server.id, serverName: server.name, toolNames, tools };
 }
 
 /**

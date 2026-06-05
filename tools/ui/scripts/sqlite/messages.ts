@@ -340,3 +340,42 @@ function mapMessageRow(row: any): any {
 
     return result;
 }
+
+export function getActiveMessagePath(convId: string, leafNodeId: string): any[] {
+    const messages = getConversationMessages(convId);
+    const nodeMap = new Map<string, any>();
+    for (const msg of messages) {
+        nodeMap.set(msg.id, msg);
+    }
+
+    let startNode = nodeMap.get(leafNodeId);
+    if (!startNode) {
+        let latestTime = -1;
+        for (const msg of messages) {
+            if (msg.timestamp > latestTime) {
+                startNode = msg;
+                latestTime = msg.timestamp;
+            }
+        }
+    }
+
+    const result: any[] = [];
+    let currentNode = startNode;
+    while (currentNode) {
+        if (currentNode.type !== 'root') {
+            result.push(currentNode);
+        }
+        if (currentNode.parent === null) {
+            break;
+        }
+        currentNode = nodeMap.get(currentNode.parent);
+    }
+
+    result.sort((a, b) => {
+        if (a.role === 'system' && b.role !== 'system') return -1;
+        if (a.role !== 'system' && b.role === 'system') return 1;
+        return a.timestamp - b.timestamp;
+    });
+
+    return result;
+}

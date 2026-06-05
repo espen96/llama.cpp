@@ -8,6 +8,7 @@ import * as llamaStream from './background/llama-stream.js';
 import * as taskManager from './background/task-manager.js';
 import * as sseHub from './background/sse-hub.js';
 import { db } from './sqlite/db.js';
+import { buildOaiRequestBody } from './background/payload-builder.js';
 export function sqliteApiPlugin(): Plugin {
     return {
         name: 'vite-plugin-sqlite-api',
@@ -299,11 +300,15 @@ export function sqliteApiPlugin(): Plugin {
                     const existingToolCallIds = new Set(existingResults.map(r => r.tool_call_id));
                     const pendingToolCalls = dbToolCalls.filter((tc: any) => !existingToolCallIds.has(tc.id));
 
+                    const activePath = messages.getActiveMessagePath(conversationId, messageId);
+                    const settingsMap = settings.getAllSettings();
+                    const requestBody = buildOaiRequestBody(activePath, settingsMap, conversationId);
+
                     const taskId = llamaStream.resumeStream(
                         {
                             conversationId,
                             assistantMessageId: messageId,
-                            requestBody: { messages: req.body.messages, ...req.body.options },
+                            requestBody,
                             baseUrl: llamaStream.resolveUpstreamConnection().baseUrl,
                             apiKey: llamaStream.resolveUpstreamConnection().apiKey,
                         },
@@ -328,11 +333,15 @@ export function sqliteApiPlugin(): Plugin {
                         return;
                     }
                     if (shouldContinue) {
+                        const activePath = messages.getActiveMessagePath(conversationId, messageId);
+                        const settingsMap = settings.getAllSettings();
+                        const requestBody = buildOaiRequestBody(activePath, settingsMap, conversationId);
+
                         const taskId = llamaStream.resumeStream(
                             {
                                 conversationId,
                                 assistantMessageId: messageId,
-                                requestBody: { messages: req.body.messages, ...req.body.options },
+                                requestBody,
                                 baseUrl: llamaStream.resolveUpstreamConnection().baseUrl,
                                 apiKey: llamaStream.resolveUpstreamConnection().apiKey,
                             }
