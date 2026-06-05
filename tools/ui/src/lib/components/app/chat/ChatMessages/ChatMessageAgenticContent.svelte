@@ -281,6 +281,20 @@
 		chainExpandedStates[entryKey] = current === undefined ? true : !current;
 	}
 
+	function lastReasoningContent(chainSections: (typeof sectionsParsed)[number][]): string | undefined {
+		for (let i = chainSections.length - 1; i >= 0; i--) {
+			const s = chainSections[i];
+			if (
+				(s.type === AgenticSectionType.REASONING ||
+					s.type === AgenticSectionType.REASONING_PENDING) &&
+				s.content
+			) {
+				return s.content;
+			}
+		}
+		return undefined;
+	}
+
 	// Group flat sections into agentic turns
 	// A new turn starts when a non-tool section follows a tool section
 	const turnGroups = $derived.by(() => {
@@ -541,6 +555,7 @@
 					class="my-2"
 					icon={Brain}
 					title={entry.summary}
+					rawContent={lastReasoningContent(entry.sections)}
 					isStreaming={isStreaming && chainHasPending(entry.sections)}
 					onToggle={() => toggleChainExpanded(entryKey)}
 				>
