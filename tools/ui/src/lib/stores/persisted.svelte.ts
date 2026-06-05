@@ -1,6 +1,14 @@
 import { browser } from '$app/environment';
 import { StorageService } from '$lib/services/storage.service';
 
+/**
+ * Generic persisted state helper backed by StorageService (SQLite backend).
+ *
+ * NOTE: Currently unused — no stores call persisted(). Kept as infrastructure
+ * for potential future use. If a new store needs reactive persisted state,
+ * use this helper rather than raw localStorage.
+ */
+
 type PersistedValue<T> = {
 	get value(): T;
 	set value(newValue: T);

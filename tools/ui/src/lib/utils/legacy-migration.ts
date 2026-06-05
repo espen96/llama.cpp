@@ -28,6 +28,8 @@ const DEPRECATED_MIGRATION_DONE_KEY = 'llama-webui-migration-v2-done';
  * @deprecated Part of legacy migration — remove with the migration module.
  * Check if migration has been performed.
  */
+// EXCEPTION: Legacy migration runs before StorageService is initialized.
+// Uses raw localStorage to track migration state — cannot route through the backend.
 export function isMigrationNeeded(): boolean {
 	try {
 		// Check new key first, fall back to deprecated old key
@@ -51,6 +53,7 @@ export function isMigrationNeeded(): boolean {
 /**
  * Mark migration as done.
  */
+// EXCEPTION: Legacy migration — uses raw localStorage before StorageService is initialized.
 function markMigrationDone(): void {
 	try {
 		localStorage.setItem(MIGRATION_DONE_KEY, String(Date.now()));

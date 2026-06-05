@@ -34,8 +34,8 @@ const ACTIVE_CONNECTION_STORAGE_KEY = `${STORAGE_APP_NAME}.activeConnectionId`;
 /**
  * connectionsStore — manages the list of server connections and the active selection.
  *
- * Persistence is abstracted behind load/save methods so we can swap
- * localStorage for SQLite / an API later without touching consumers.
+ * Persistence is abstracted behind load/save methods. All storage is routed through
+ * StorageService → SQLite backend database.
  */
 class ConnectionsStore {
 	connections = $state<ServerConnection[]>([]);

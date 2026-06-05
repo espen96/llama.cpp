@@ -777,7 +777,7 @@ function getAllSettings(): SettingsEntry[] {
 	return result;
 }
 
-/** Flat config object stored in localStorage. */
+/** Flat config object stored via StorageService (backend SQLite database). */
 export const SETTING_CONFIG_DEFAULT: Record<string, SettingsConfigValue> = Object.fromEntries(
 	getAllSettings().map((s) => [s.key, s.defaultValue])
 ) as Record<string, SettingsConfigValue>;

@@ -190,8 +190,8 @@ class MCPStore {
 
 	/**
 	 * Checks if a server is enabled for a given chat.
-	 * Only per-chat overrides (persisted in localStorage for new chats,
-	 * or in IndexedDB for existing conversations) control enabled state.
+	 * Only per-chat overrides (persisted via StorageService for new chats,
+	 * or in the database for existing conversations) control enabled state.
 	 */
 	#checkServerEnabled(
 		server: MCPServerSettingsEntry,

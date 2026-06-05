@@ -54,6 +54,9 @@ const MIGRATION_STATE_VERSION = 1;
 
 // State Management
 
+// EXCEPTION: Migration state is stored in raw localStorage because these migrations
+// run before StorageService is initialized. This is the only non-migration code that
+// uses raw localStorage — all app reads/writes go through StorageService → SQLite.
 function getMigrationState(): MigrationState {
 	try {
 		const raw = localStorage.getItem(MIGRATION_STATE_KEY);
@@ -72,6 +75,7 @@ function getMigrationState(): MigrationState {
 	}
 }
 
+// EXCEPTION: Migration state persistence — runs before StorageService is initialized.
 function saveMigrationState(state: MigrationState): void {
 	localStorage.setItem(
 		MIGRATION_STATE_KEY,
@@ -114,6 +118,9 @@ const localStorageMigration: Migration = {
 	description: 'Copy localStorage keys from LlamaCppWebui to LlamaUi prefix (non-destructive)',
 
 	async run(): Promise<void> {
+		// EXCEPTION: Runs before StorageService is initialized. Migrates raw localStorage
+		// keys from the deprecated prefix to the current prefix. All app data is eventually
+		// routed through StorageService → SQLite backend after this migration completes.
 		// Non-destructive: copy to new key, but KEEP the old key
 		for (const [newKey, deprecatedKey] of Object.entries(NEW_TO_DEPRECATED_MAP)) {
 			// Only migrate if new key doesn't already exist
@@ -442,6 +449,8 @@ const themeMigration: Migration = {
 	description: 'Copy standalone theme key to config object (non-destructive)',
 
 	async run(): Promise<void> {
+		// EXCEPTION: Runs before StorageService is initialized. Theme is a browser-only
+		// concern embedded in the backend-owned LlamaUi.config object.
 		const legacyTheme = localStorage.getItem('theme');
 		if (legacyTheme === null) {
 			if (import.meta.env.DEV && import.meta.env.VITE_DEBUG)
@@ -477,6 +486,7 @@ const customJsonKeyMigration: Migration = {
 	description: 'Copy legacy custom config key to customJson (non-destructive)',
 
 	async run(): Promise<void> {
+		// EXCEPTION: Runs before StorageService is initialized. Migrates raw localStorage.
 		const configRaw = localStorage.getItem(CONFIG_LOCALSTORAGE_KEY);
 		if (configRaw === null) return;
 

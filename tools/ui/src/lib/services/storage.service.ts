@@ -18,6 +18,10 @@ export class StorageService {
             
             // If the server has no settings at all, we migrate from localStorage
             if (Object.keys(serverSettings).length === 0) {
+                // EXCEPTION: This is migration bootstrap code. Runs before StorageService is
+                // initialized, so it must read raw localStorage to seed the backend database.
+                // This is the ONLY place raw localStorage is used for app data at runtime.
+                // All other app reads/writes go through StorageService → SQLite backend.
                 const toMigrate: Record<string, string> = {};
                 for (let i = 0; i < localStorage.length; i++) {
                     const key = localStorage.key(i);

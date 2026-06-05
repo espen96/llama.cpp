@@ -2,14 +2,14 @@
  * settingsStore - Application configuration and theme management
  *
  * This store manages all application settings including AI model parameters, UI preferences,
- * and theme configuration. It provides persistent storage through localStorage with reactive
- * state management using Svelte 5 runes.
+ * and theme configuration. It provides persistent storage through StorageService (backed by
+ * the SQLite database via the backend API) with reactive state management using Svelte 5 runes.
  *
  * **Architecture & Relationships:**
  * - **settingsStore** (this class): Configuration state management
  *   - Manages AI model parameters (temperature, max tokens, etc.)
  *   - Handles theme switching and persistence
- *   - Provides localStorage synchronization
+ *   - Provides StorageService synchronization (backend SQLite database)
  *   - Offers reactive configuration access
  *
  * - **ChatService**: Reads model parameters for API requests
@@ -18,7 +18,7 @@
  * **Key Features:**
  * - **Model Parameters**: Temperature, max tokens, top-p, top-k, repeat penalty
  * - **Theme Management**: Auto, light, dark theme switching
- * - **Persistence**: Automatic localStorage synchronization
+ * - **Persistence**: Automatic StorageService synchronization (backend database)
  * - **Reactive State**: Svelte 5 runes for automatic UI updates
  * - **Default Handling**: Graceful fallback to defaults for missing settings
  * - **Batch Updates**: Efficient multi-setting updates
@@ -139,7 +139,7 @@ class SettingsStore {
 			);
 			this.userOverrides = new Set(savedOverrides);
 		} catch (error) {
-			console.warn('Failed to parse config from localStorage, using defaults:', error);
+			console.warn('Failed to parse config from StorageService, using defaults:', error);
 			this.config = { ...SETTING_CONFIG_DEFAULT };
 			this.userOverrides = new Set();
 		}
@@ -231,7 +231,7 @@ class SettingsStore {
 				JSON.stringify(Array.from(this.userOverrides))
 			);
 		} catch (error) {
-			console.error('Failed to save config to localStorage:', error);
+			console.error('Failed to save config to StorageService:', error);
 		}
 	}
 
