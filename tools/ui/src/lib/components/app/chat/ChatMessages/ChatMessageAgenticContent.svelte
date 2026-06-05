@@ -30,7 +30,9 @@
 	} from '$lib/utils';
 	import {
 		agenticResolvePermission,
-		agenticResolveContinue
+		agenticPendingContinueRequest,
+		agenticResolveContinue,
+		agenticLastError
 	} from '$lib/stores/agentic.svelte';
 	import { config } from '$lib/stores/settings.svelte';
 
@@ -74,6 +76,10 @@
 
 	const showToolCallInProgress = $derived(config().showToolCallInProgress as boolean);
 	const showThoughtInProgress = $derived(config().showThoughtInProgress as boolean);
+
+	const hasReasoningError = $derived(
+		isLastAssistantMessage ? !!agenticLastError(message.convId) : false
+	);
 
 	import { toolsStore } from '$lib/stores/tools.svelte';
 
@@ -462,11 +468,21 @@
 			</div>
 		</CollapsibleContentBlock>
 	{:else if section.type === AgenticSectionType.REASONING}
+		{@const reasoningSubtitle = section.wasInterrupted
+			? hasReasoningError
+				? 'Error'
+				: 'Cancelled'
+			: isStreaming
+				? ''
+				: undefined}
+
 		<CollapsibleContentBlock
 			open={isExpanded(index, section)}
 			class="my-2"
 			icon={Brain}
 			title="Reasoning"
+			subtitle={reasoningSubtitle}
+			rawContent={section.content}
 			onToggle={() => toggleExpanded(index, section)}
 		>
 			<div class="pt-3">
@@ -477,7 +493,7 @@
 		</CollapsibleContentBlock>
 	{:else if section.type === AgenticSectionType.REASONING_PENDING}
 		{@const reasoningTitle = isStreaming ? 'Reasoning...' : 'Reasoning'}
-		{@const reasoningSubtitle = isStreaming ? '' : 'incomplete'}
+		{@const reasoningSubtitle = isStreaming ? '' : hasReasoningError ? 'Error' : 'Cancelled'}
 
 		<CollapsibleContentBlock
 			open={isExpanded(index, section)}
@@ -485,6 +501,7 @@
 			icon={Brain}
 			title={reasoningTitle}
 			subtitle={reasoningSubtitle}
+			rawContent={section.content}
 			{isStreaming}
 			onToggle={() => toggleExpanded(index, section)}
 		>

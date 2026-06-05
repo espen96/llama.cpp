@@ -940,6 +940,16 @@ export function agenticResolveContinue(conversationId: string, messageId: string
 	chatStore.resumeContinue(conversationId, messageId, shouldContinue);
 }
 
+export function agenticPendingPermissionRequest(_conversationId: string): { toolName: string; serverLabel: string } | null {
+	// Frontend stub — permission state is owned by backend pending-permissions.ts
+	return null;
+}
+
+export function agenticPendingContinueRequest(_conversationId: string): boolean {
+	// Frontend stub — continue state is owned by backend pending-continue-requests.ts
+	return false;
+}
+
 export function agenticHasPendingSteeringMessage(conversationId: string) {
 	return agenticStore.hasPendingSteeringMessage(conversationId);
 }
