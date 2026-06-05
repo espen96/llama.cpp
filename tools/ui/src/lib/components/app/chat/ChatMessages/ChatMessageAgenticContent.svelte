@@ -75,7 +75,6 @@
 	let expandedStates: Record<number, boolean> = $state({});
 
 	const showToolCallInProgress = $derived(config().showToolCallInProgress as boolean);
-	const showThoughtInProgress = $derived(config().showThoughtInProgress as boolean);
 
 	const hasReasoningError = $derived(
 		isLastAssistantMessage ? !!agenticLastError(message.convId) : false
@@ -325,10 +324,6 @@
 			section.type === AgenticSectionType.TOOL_CALL_STREAMING
 		) {
 			return showToolCallInProgress;
-		}
-
-		if (section.type === AgenticSectionType.REASONING_PENDING) {
-			return showThoughtInProgress;
 		}
 
 		return false;
