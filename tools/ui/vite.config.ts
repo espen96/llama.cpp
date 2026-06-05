@@ -11,10 +11,22 @@ import { corsProxyPlugin } from './scripts/vite-plugin-cors-proxy';
 import { localToolsPlugin } from './scripts/vite-plugin-local-tools';
 import { mcpProxyPlugin } from './scripts/vite-plugin-mcp-proxy';
 import { sqliteApiPlugin } from './scripts/vite-plugin-sqlite-api';
+import { playwright } from '@vitest/browser-playwright';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const SERVER_ORIGIN = import.meta.env?.VITE_PUBLIC_SERVER_ORIGIN || 'http://localhost:8080';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const browserBaseConfig: any = {
+	enabled: true,
+	provider: playwright({
+		launchOptions: {
+			args: ['--no-sandbox']
+		}
+	}),
+	instances: [{ browser: 'chromium' }]
+};
 
 export default defineConfig({
 	resolve: {
@@ -42,20 +54,15 @@ export default defineConfig({
 
 	test: {
 		projects: [
-			{
-				extends: './vite.config.ts',
-				test: {
-					name: 'client',
-					environment: 'browser',
-					browser: {
-						enabled: true,
-						provider: 'playwright',
-						instances: [{ browser: 'chromium' }]
-					},
-					include: ['tests/client/**/*.svelte.{test,spec}.{js,ts}'],
-					setupFiles: ['./vitest-setup-client.ts']
-				}
-			},
+		{
+			extends: './vite.config.ts',
+			test: {
+				name: 'client',
+				browser: browserBaseConfig,
+				include: ['tests/client/**/*.svelte.{test,spec}.{js,ts}'],
+				setupFiles: ['./vitest-setup-client.ts']
+			}
+		},
 
 			{
 				extends: './vite.config.ts',
@@ -66,19 +73,14 @@ export default defineConfig({
 				}
 			},
 
-			{
-				extends: './vite.config.ts',
-				test: {
-					name: 'ui',
-					environment: 'browser',
-					browser: {
-						enabled: true,
-						provider: 'playwright',
-						instances: [{ browser: 'chromium', headless: true }]
-					},
-					include: ['tests/stories/**/*.stories.{js,ts,svelte}'],
-					setupFiles: ['./.storybook/vitest.setup.ts']
-				},
+		{
+			extends: './vite.config.ts',
+			test: {
+				name: 'ui',
+				browser: { ...browserBaseConfig, instances: [{ browser: 'chromium', headless: true }] },
+				include: ['tests/stories/**/*.stories.{js,ts,svelte}'],
+				setupFiles: ['./.storybook/vitest.setup.ts']
+			},
 				plugins: [
 					storybookTest({
 						storybookScript: 'pnpm run storybook --no-open'
