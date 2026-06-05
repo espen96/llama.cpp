@@ -105,6 +105,10 @@
 	});
 
 	// Reset dismissed when pendingPermission changes (new request or cleared)
+	// NOTE: Known minor issue — the permission dialog can briefly flash after the user
+	// clicks Allow/Deny. reconnectToTask updates the message store (new object reference),
+	// causing pendingPermission to briefly flip true→false→true, which resets
+	// permissionDismissed. Resolves itself. TODO: fix with debounced dismiss or stable derived.
 	let prevPendingRef: typeof pendingPermission = null;
 	$effect(() => {
 		if (pendingPermission !== prevPendingRef) {

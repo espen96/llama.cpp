@@ -493,6 +493,12 @@ async function runAgenticLoop(task: taskManager.Task, opts: StartStreamOptions, 
 
 				if (!isAllowed) {
 					// Tool not in always-allowed list — request permission from the browser
+					// NOTE: Permission flow is a known fragile area. The agentic loop pauses here,
+					// flushes state to DB, and the frontend must correctly reconstruct the message
+					// path on resume. Issues have historically occurred with reasoning content
+					// (model exits thinking between tool calls) and message tree integrity.
+					// If permission flows break, check: (1) getActiveMessagePath correctness,
+					// (2) buildOaiRequestBody message normalization, (3) reasoning split handling.
 					console.log(
 						`[llama-stream] Task ${taskId}: tool "${toolName}" needs permission, saving state to DB and exiting.`
 					);

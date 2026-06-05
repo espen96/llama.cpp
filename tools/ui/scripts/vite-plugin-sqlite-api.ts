@@ -345,6 +345,13 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
+            // NOTE: Permission resume rebuilds the message path from SQLite. Historical issues
+            // have caused message history errors here, especially when reasoning content is
+            // involved (the model may exit thinking between tool calls). The active path
+            // reconstruction via getActiveMessagePath + buildOaiRequestBody should handle this
+            // correctly now, but this is a known fragile area. If permission flows break again,
+            // investigate whether the message tree (parent/children) or reasoning splits are
+            // causing incorrect path reconstruction.
             app.post('/chat/:conversationId/resume-permission', async (req, res) => {
                 try {
                     const { conversationId } = req.params;
