@@ -194,7 +194,7 @@ export class ChatService {
 			messages: normalizedMessages.map((msg: ApiChatMessageData) => {
 				const mapped: Record<string, unknown> = {
 					role: msg.role,
-					content: msg.content,
+					content: msg.content || null,
 					tool_call_id: msg.tool_call_id
 				};
 				if (msg.tool_calls) {

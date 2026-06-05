@@ -375,6 +375,7 @@ class ChatStore {
 						parent: parentId
 					};
 					conversationsStore.addMessageToActive(newMsg);
+					conversationsStore.updateCurrentNode(newMsgId).catch(console.error);
 					messageId = newMsgId;
 					streamedContent = '';
 					streamedReasoning = '';
