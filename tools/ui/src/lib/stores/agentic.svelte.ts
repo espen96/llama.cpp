@@ -133,19 +133,6 @@ function toAgenticMessages(messages: ApiChatMessageData[]): AgenticMessage[] {
 
 class AgenticStore {
 	private _sessions = new SvelteMap<string, AgenticSession>();
-	/** Dedicated reactive state for pending permission requests (ensures immediate UI updates) */
-	private _pendingPermissions = new SvelteMap<
-		string,
-		{ toolName: string; serverLabel: string } | null
-	>();
-	/** Non-reactive: stores resolve functions for pending permission Promises */
-	private _permissionResolvers = new Map<string, (decision: ToolPermissionDecision) => void>();
-
-	/** Dedicated reactive state for pending continue requests (turn limit reached) */
-	private _pendingContinueRequests = new SvelteMap<string, boolean>();
-	/** Non-reactive: stores resolve functions for pending continue Promises */
-	private _continueResolvers = new Map<string, (shouldContinue: boolean) => void>();
-
 	/** Reactive: queued steering messages to inject between turns */
 	private _steeringMessages = new SvelteMap<string, SteeringMessage>();
 
@@ -204,30 +191,48 @@ class AgenticStore {
 	streamingToolCall(conversationId: string): { name: string; arguments: string } | null {
 		return this.getSession(conversationId).streamingToolCall;
 	}
-
-	pendingPermissionRequest(
-		conversationId: string
-	): { toolName: string; serverLabel: string } | null {
-		return this._pendingPermissions.get(conversationId) ?? null;
-	}
-
-	pendingContinueRequest(conversationId: string): boolean {
-		return this._pendingContinueRequests.get(conversationId) ?? false;
-	}
-
-	resolveContinue(conversationId: string, shouldContinue: boolean): void {
-		const resolver = this._continueResolvers.get(conversationId);
-		if (resolver) {
-			this._continueResolvers.delete(conversationId);
-			resolver(shouldContinue);
+	async resolveContinue(conversationId: string, messageId: string, shouldContinue: boolean): Promise<void> {
+		try {
+			await fetch(`/api/chat/${encodeURIComponent(conversationId)}/resume-continue`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ messageId, shouldContinue })
+			});
+		} catch (err) {
+			console.error('[agenticStore] Error resolving continue request:', err);
 		}
 	}
 
-	resolvePermission(conversationId: string, decision: ToolPermissionDecision): void {
-		const resolver = this._permissionResolvers.get(conversationId);
-		if (resolver) {
-			this._permissionResolvers.delete(conversationId);
-			resolver(decision);
+	async resolvePermission(
+		conversationId: string,
+		messageId: string,
+		toolName: string,
+		serverLabel: string,
+		decision: ToolPermissionDecision
+	): Promise<void> {
+		const permissionKey = toolsStore.getPermissionKey(toolName);
+		if (decision === ToolPermissionDecision.ALWAYS && permissionKey) {
+			permissionsStore.allowTool(permissionKey);
+		} else if (decision === ToolPermissionDecision.ALWAYS_SERVER) {
+			const serverToolKeys = toolsStore.allTools
+				.filter((t) =>
+					t.serverName
+						? t.serverName === serverLabel
+						: toolsStore.getToolServerLabel(t.definition.function.name) === serverLabel
+				)
+				.map((t) => toolsStore.getPermissionKey(t.definition.function.name)!)
+				.filter((k): k is string => k !== null);
+			permissionsStore.allowTools(serverToolKeys);
+		}
+
+		try {
+			await fetch(`/api/chat/${encodeURIComponent(conversationId)}/resume-permission`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ messageId, decision })
+			});
+		} catch (err) {
+			console.error('[agenticStore] Error resolving tool permission:', err);
 		}
 	}
 
@@ -298,89 +303,6 @@ class AgenticStore {
 		const trimmed = args.trim();
 		if (trimmed === '') return {};
 		return JSON.parse(trimmed) as Record<string, unknown>;
-	}
-
-	async requestPermission(
-		conversationId: string,
-		toolName: string,
-		serverLabel: string,
-		signal?: AbortSignal
-	): Promise<ToolPermissionDecision> {
-		const permissionKey = toolsStore.getPermissionKey(toolName);
-		if (permissionKey && permissionsStore.hasTool(permissionKey)) {
-			return ToolPermissionDecision.ONCE;
-		}
-
-		this._pendingPermissions.set(conversationId, { toolName, serverLabel });
-
-		return new Promise<ToolPermissionDecision>((resolve) => {
-			if (signal?.aborted) {
-				this._pendingPermissions.set(conversationId, null);
-				resolve(ToolPermissionDecision.DENY);
-				return;
-			}
-
-			this._permissionResolvers.set(conversationId, (decision) => {
-				this._pendingPermissions.set(conversationId, null);
-				if (decision === ToolPermissionDecision.ALWAYS && permissionKey) {
-					permissionsStore.allowTool(permissionKey);
-				} else if (decision === ToolPermissionDecision.ALWAYS_SERVER) {
-					const serverToolKeys = toolsStore.allTools
-						.filter((t) =>
-							t.serverName
-								? t.serverName === serverLabel
-								: toolsStore.getToolServerLabel(t.definition.function.name) === serverLabel
-						)
-						.map((t) => toolsStore.getPermissionKey(t.definition.function.name)!)
-						.filter((k): k is string => k !== null);
-					permissionsStore.allowTools(serverToolKeys);
-				}
-				resolve(decision);
-			});
-
-			signal?.addEventListener(
-				'abort',
-				() => {
-					const resolver = this._permissionResolvers.get(conversationId);
-					if (resolver) {
-						this._permissionResolvers.delete(conversationId);
-						this._pendingPermissions.set(conversationId, null);
-						resolve(ToolPermissionDecision.DENY);
-					}
-				},
-				{ once: true }
-			);
-		});
-	}
-
-	async requestContinue(conversationId: string, signal?: AbortSignal): Promise<boolean> {
-		this._pendingContinueRequests.set(conversationId, true);
-
-		return new Promise<boolean>((resolve) => {
-			if (signal?.aborted) {
-				this._pendingContinueRequests.set(conversationId, false);
-				resolve(false);
-				return;
-			}
-
-			this._continueResolvers.set(conversationId, (shouldContinue) => {
-				this._pendingContinueRequests.set(conversationId, false);
-				resolve(shouldContinue);
-			});
-
-			signal?.addEventListener(
-				'abort',
-				() => {
-					const resolver = this._continueResolvers.get(conversationId);
-					if (resolver) {
-						this._continueResolvers.delete(conversationId);
-						this._pendingContinueRequests.set(conversationId, false);
-						resolve(false);
-					}
-				},
-				{ once: true }
-			);
-		});
 	}
 
 	async runAgenticFlow(params: AgenticFlowParams): Promise<AgenticFlowResult> {
@@ -1008,29 +930,22 @@ export function agenticPendingPermissionRequest(conversationId: string) {
 	return agenticStore.pendingPermissionRequest(conversationId);
 }
 
-export function agenticResolvePermission(conversationId: string, decision: ToolPermissionDecision) {
-	agenticStore.resolvePermission(conversationId, decision);
-}
-
-export function agenticRequestPermission(
+export function agenticResolvePermission(
 	conversationId: string,
+	messageId: string,
 	toolName: string,
 	serverLabel: string,
-	signal?: AbortSignal
+	decision: ToolPermissionDecision
 ) {
-	return agenticStore.requestPermission(conversationId, toolName, serverLabel, signal);
+	agenticStore.resolvePermission(conversationId, messageId, toolName, serverLabel, decision);
 }
 
 export function agenticPendingContinueRequest(conversationId: string) {
 	return agenticStore.pendingContinueRequest(conversationId);
 }
 
-export function agenticResolveContinue(conversationId: string, shouldContinue: boolean) {
-	agenticStore.resolveContinue(conversationId, shouldContinue);
-}
-
-export function agenticRequestContinue(conversationId: string, signal?: AbortSignal): Promise<boolean> {
-	return agenticStore.requestContinue(conversationId, signal);
+export function agenticResolveContinue(conversationId: string, messageId: string, shouldContinue: boolean) {
+	agenticStore.resolveContinue(conversationId, messageId, shouldContinue);
 }
 
 export function agenticHasPendingSteeringMessage(conversationId: string) {

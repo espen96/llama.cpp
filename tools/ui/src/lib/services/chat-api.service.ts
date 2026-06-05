@@ -38,8 +38,6 @@ export interface ChatStreamCallbacksBackground {
 	onTimings?: (timings: ChatMessageTimings) => void;
 	onComplete?: (content: string, reasoningContent?: string) => Promise<void>;
 	onError?: (error: Error) => void;
-	onPermissionRequest?: (requestId: string, toolName: string, serverLabel: string) => void;
-	onContinueRequest?: (requestId: string) => void;
 	onAssistantMessageCreated?: (messageId: string, parentId: string) => void;
 	onToolResultCreated?: (messageId: string, toolCallId: string, content: string, parentId: string) => void;
 }
@@ -181,28 +179,6 @@ export function startBackgroundChat(
 					accumulatedContent = '';
 					accumulatedReasoning = '';
 					callbacks.onAssistantMessageCreated?.(parsed.messageId, parsed.parentId);
-				}
-			} catch { /* ignore */ }
-		});
-
-		// Backend agentic loop: permission requested
-		eventSource.addEventListener('permission_request', (event) => {
-			const data = (event as MessageEvent).data;
-			try {
-				const parsed = JSON.parse(data);
-				if (parsed && typeof parsed.requestId === 'string' && typeof parsed.toolName === 'string') {
-					callbacks.onPermissionRequest?.(parsed.requestId, parsed.toolName, parsed.serverLabel || '');
-				}
-			} catch { /* ignore */ }
-		});
-
-		// Backend agentic loop: continue requested (turn limit reached)
-		eventSource.addEventListener('continue_request', (event) => {
-			const data = (event as MessageEvent).data;
-			try {
-				const parsed = JSON.parse(data);
-				if (parsed && typeof parsed.requestId === 'string') {
-					callbacks.onContinueRequest?.(parsed.requestId);
 				}
 			} catch { /* ignore */ }
 		});
@@ -410,28 +386,6 @@ export function reconnectBackgroundChat(
 					accumulatedContent = '';
 					accumulatedReasoning = '';
 					callbacks.onAssistantMessageCreated?.(parsed.messageId, parsed.parentId);
-				}
-			} catch { /* ignore */ }
-		});
-
-		// Backend agentic loop: permission requested
-		eventSource.addEventListener('permission_request', (event) => {
-			const data = (event as MessageEvent).data;
-			try {
-				const parsed = JSON.parse(data);
-				if (parsed && typeof parsed.requestId === 'string' && typeof parsed.toolName === 'string') {
-					callbacks.onPermissionRequest?.(parsed.requestId, parsed.toolName, parsed.serverLabel || '');
-				}
-			} catch { /* ignore */ }
-		});
-
-		// Backend agentic loop: continue requested (turn limit reached)
-		eventSource.addEventListener('continue_request', (event) => {
-			const data = (event as MessageEvent).data;
-			try {
-				const parsed = JSON.parse(data);
-				if (parsed && typeof parsed.requestId === 'string') {
-					callbacks.onContinueRequest?.(parsed.requestId);
 				}
 			} catch { /* ignore */ }
 		});

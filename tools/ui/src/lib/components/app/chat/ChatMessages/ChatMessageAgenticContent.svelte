@@ -28,9 +28,7 @@
 		type ToolResultLine
 	} from '$lib/utils';
 	import {
-		agenticPendingPermissionRequest,
 		agenticResolvePermission,
-		agenticPendingContinueRequest,
 		agenticResolveContinue
 	} from '$lib/stores/agentic.svelte';
 	import { config } from '$lib/stores/settings.svelte';
@@ -76,11 +74,22 @@
 	const showToolCallInProgress = $derived(config().showToolCallInProgress as boolean);
 	const showThoughtInProgress = $derived(config().showThoughtInProgress as boolean);
 
+	import { toolsStore } from '$lib/stores/tools.svelte';
+
 	let permissionDismissed = $state(false);
 
-	const pendingPermission = $derived(
-		isStreaming && isLastAssistantMessage ? agenticPendingPermissionRequest(message.convId) : null
-	);
+	const sections = $derived(deriveAgenticSections(message, toolMessages, [], isStreaming));
+
+	const pendingPermission = $derived.by(() => {
+		if (message.generation_status !== 'waiting_for_permission') return null;
+		if (!isLastAssistantMessage) return null;
+		const pendingSection = sections.find(s => s.type === AgenticSectionType.TOOL_CALL_PENDING);
+		if (!pendingSection?.toolName) return null;
+		return {
+			toolName: pendingSection.toolName,
+			serverLabel: toolsStore.getToolServerLabel(pendingSection.toolName)
+		};
+	});
 
 	// Reset dismissed when pendingPermission changes (new request or cleared)
 	let prevPendingRef: typeof pendingPermission = null;
@@ -94,14 +103,15 @@
 	});
 
 	function handlePermission(decision: ToolPermissionDecision) {
+		if (!pendingPermission) return;
 		permissionDismissed = true;
-		agenticResolvePermission(message.convId, decision);
+		agenticResolvePermission(message.convId, message.id, pendingPermission.toolName, pendingPermission.serverLabel, decision);
 	}
 
 	let continueDismissed = $state(false);
 
 	const pendingContinue = $derived(
-		isStreaming && isLastAssistantMessage ? agenticPendingContinueRequest(message.convId) : false
+		isLastAssistantMessage && message.generation_status === 'waiting_for_continue'
 	);
 
 	let prevContinueRef = false;
@@ -116,10 +126,8 @@
 
 	function handleContinue(shouldContinue: boolean) {
 		continueDismissed = true;
-		agenticResolveContinue(message.convId, shouldContinue);
+		agenticResolveContinue(message.convId, message.id, shouldContinue);
 	}
-
-	const sections = $derived(deriveAgenticSections(message, toolMessages, [], isStreaming));
 
 	// Parse tool results with images
 	const sectionsParsed = $derived(

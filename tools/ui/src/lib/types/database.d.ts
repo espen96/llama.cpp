@@ -122,6 +122,8 @@ export interface DatabaseMessage {
 	extra?: DatabaseMessageExtra[];
 	timings?: ChatMessageTimings;
 	model?: string;
+	/** State of the generation loop. Used by stateless background agents to resume paused tasks. */
+	generation_status?: 'done' | 'streaming' | 'waiting_for_permission' | 'waiting_for_continue';
 }
 
 export type ExportedConversation = {

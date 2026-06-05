@@ -323,10 +323,20 @@ class ChatStore {
 					this.chatActiveTaskIds.delete(convId);
 					const idx = conversationsStore.findMessageIndex(messageId);
 					if (idx !== -1) {
-						conversationsStore.updateMessageAtIndex(idx, {
+						const uiUpdate: Partial<DatabaseMessage> = {
 							content,
 							reasoningContent: reasoningContent || undefined
-						});
+						};
+						try {
+							const allMessages = await conversationsStore.getConversationMessages(convId);
+							const dbMsg = allMessages.find((m) => m.id === messageId);
+							if (dbMsg?.generation_status) {
+								uiUpdate.generation_status = dbMsg.generation_status;
+							}
+						} catch (e) {
+							console.error('[chatStore] Failed to fetch final message status from DB on reconnect:', e);
+						}
+						conversationsStore.updateMessageAtIndex(idx, uiUpdate);
 					}
 					await conversationsStore.updateCurrentNode(messageId);
 					this.setStreamingActive(false);
@@ -382,30 +392,6 @@ class ChatStore {
 					};
 					conversationsStore.addMessageToActive(newMsg);
 					conversationsStore.updateCurrentNode(newMsgId).catch(console.error);
-				},
-				onPermissionRequest: async (requestId: string, toolName: string, serverLabel: string) => {
-					try {
-						const decision = await agenticStore.requestPermission(convId, toolName, serverLabel, abortController.signal);
-						await fetch(`/api/chat/${encodeURIComponent(task.taskId)}/permission`, {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ requestId, decision })
-						});
-					} catch (err) {
-						console.error('[chatStore] Error resolving tool permission during reconnect:', err);
-					}
-				},
-				onContinueRequest: async (requestId: string) => {
-					try {
-						const shouldContinue = await agenticStore.requestContinue(convId, abortController.signal);
-						await fetch(`/api/chat/${encodeURIComponent(task.taskId)}/continue`, {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ requestId, shouldContinue })
-						});
-					} catch (err) {
-						console.error('[chatStore] Error resolving continue request during reconnect:', err);
-					}
 				}
 			},
 			undefined // backend owns connection
@@ -1147,40 +1133,6 @@ class ChatStore {
 						conversationsStore.addMessageToActive(newMsg);
 						conversationsStore.updateCurrentNode(messageId).catch(console.error);
 					},
-					onPermissionRequest: async (requestId: string, toolName: string, serverLabel: string) => {
-						try {
-							const decision = await agenticStore.requestPermission(convId, toolName, serverLabel, abortController.signal);
-							const currentTaskId = this.chatActiveTaskIds.get(convId);
-							if (!currentTaskId) {
-								console.error('[chatStore] No active taskId found when permission decision resolved');
-								return;
-							}
-							await fetch(`/api/chat/${encodeURIComponent(currentTaskId)}/permission`, {
-								method: 'POST',
-								headers: { 'Content-Type': 'application/json' },
-								body: JSON.stringify({ requestId, decision })
-							});
-						} catch (err) {
-							console.error('[chatStore] Error resolving tool permission:', err);
-						}
-					},
-					onContinueRequest: async (requestId: string) => {
-						try {
-							const shouldContinue = await agenticStore.requestContinue(convId, abortController.signal);
-							const currentTaskId = this.chatActiveTaskIds.get(convId);
-							if (!currentTaskId) {
-								console.error('[chatStore] No active taskId found when continue decision resolved');
-								return;
-							}
-							await fetch(`/api/chat/${encodeURIComponent(currentTaskId)}/continue`, {
-								method: 'POST',
-								headers: { 'Content-Type': 'application/json' },
-								body: JSON.stringify({ requestId, shouldContinue })
-							});
-						} catch (err) {
-							console.error('[chatStore] Error resolving continue request:', err);
-						}
-					},
 					onComplete: async (content: string, reasoningContent?: string) => {
 						// Guard against double-complete (done event + [DONE] chunk both calling finalize)
 						if (!this.chatActiveTaskIds.has(convId)) return;
@@ -1191,6 +1143,18 @@ class ChatStore {
 							content,
 							reasoningContent: reasoningContent || undefined
 						};
+
+						// Fetch the final generation_status from DB to sync UI (e.g. waiting_for_permission)
+						try {
+							const allMessages = await conversationsStore.getConversationMessages(convId);
+							const dbMsg = allMessages.find((m) => m.id === currentMessageId);
+							if (dbMsg?.generation_status) {
+								uiUpdate.generation_status = dbMsg.generation_status;
+							}
+						} catch (e) {
+							console.error('[chatStore] Failed to fetch final message status from DB:', e);
+						}
+
 						if (resolvedModel) uiUpdate.model = resolvedModel;
 						conversationsStore.updateMessageAtIndex(idx, uiUpdate);
 						await conversationsStore.updateCurrentNode(currentMessageId);
