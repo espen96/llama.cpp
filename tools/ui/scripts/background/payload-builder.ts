@@ -109,7 +109,17 @@ export function buildOaiRequestBody(messages: any[], settings: Record<string, st
     const cfg = configRaw ? JSON.parse(configRaw) : {};
     const conv = getConversation(convId);
 
-    const normalizedMessages = messages.map(convertDbMessageToApiChatMessageData);
+    // Filter out empty trailing assistant placeholders — these leak the chat template
+    // prefix ("assistant\n<think>") into the model output because the model sees an
+    // assistant turn it needs to continue from.
+    const normalizedMessages = messages
+        .map(convertDbMessageToApiChatMessageData)
+        .filter((msg: any, i: number, arr: any[]) => {
+            if (i === arr.length - 1 && msg.role === 'assistant' && !msg.content && !msg.tool_calls?.length) {
+                return false;
+            }
+            return true;
+        });
 
     const requestBody: any = {
         messages: normalizedMessages,
