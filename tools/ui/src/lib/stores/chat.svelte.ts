@@ -1094,13 +1094,19 @@ class ChatStore {
 		// to SQLite regardless of whether this SSE connection stays open.
 		await mcpStore.ensureInitialized(perChatOverrides).catch(console.error);
 
-		// Zen path: Send only conversationId + assistantMessageId.
-		// The backend reconstructs the full request body from SQLite.
+		// Zen path: Send conversationId + assistantMessageId + essential options.
+		// The backend reconstructs the full request body from SQLite, but needs
+		// frontend-only state like the selected model and runtime API options
+		// that aren't persisted in the backend config.
 		await new Promise<void>((resolve) => {
 			const handle = startBackgroundChat(
 				{
 					conversationId: convId,
-					assistantMessageId: assistantMessage.id
+					assistantMessageId: assistantMessage.id,
+					options: {
+						...this.getApiOptions(),
+						...(effectiveModel ? { model: effectiveModel } : {})
+					}
 				},
 				{
 				onTaskId: (taskId: string) => {

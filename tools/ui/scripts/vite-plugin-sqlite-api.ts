@@ -186,10 +186,12 @@ export function sqliteApiPlugin(): Plugin {
                         // Legacy path: frontend sent the full message array
                         requestBody = { messages: msgs, ...bodyOptions };
                     } else {
-                        // Zen path: backend rebuilds from SQLite
+                        // Zen path: backend rebuilds messages from SQLite,
+                        // then merges frontend-supplied options (model, temperature, etc.)
+                        // that represent transient UI state the backend doesn't persist.
                         const activePath = messages.getActiveMessagePath(conversationId, assistantMessageId);
                         const settingsMap = settings.getAllSettings();
-                        requestBody = buildOaiRequestBody(activePath, settingsMap, conversationId);
+                        requestBody = { ...buildOaiRequestBody(activePath, settingsMap, conversationId), ...bodyOptions };
                     }
 
                     // Set generation_status to 'streaming' on the placeholder message
@@ -379,9 +381,6 @@ export function sqliteApiPlugin(): Plugin {
                     const settingsMap = settings.getAllSettings();
                     const requestBody = buildOaiRequestBody(activePath, settingsMap, conversationId);
 
-                    // Count assistant messages to determine current turn number
-                    const previousTurnCount = activePath.filter((m: any) => m.role === 'assistant').length;
-
                     const taskId = llamaStream.resumeStream(
                         {
                             conversationId,
@@ -394,7 +393,6 @@ export function sqliteApiPlugin(): Plugin {
                             pendingToolCalls,
                             allowedOnceKey: req.body.allowedOnceToolName,
                             denied: decision === 'deny',
-                            previousTurnCount
                         }
                     );
 
@@ -416,9 +414,6 @@ export function sqliteApiPlugin(): Plugin {
                         const settingsMap = settings.getAllSettings();
                         const requestBody = buildOaiRequestBody(activePath, settingsMap, conversationId);
 
-                        // Count assistant messages to determine current turn number
-                        const previousTurnCount = activePath.filter((m: any) => m.role === 'assistant').length;
-
                         const taskId = llamaStream.resumeStream(
                             {
                                 conversationId,
@@ -426,8 +421,7 @@ export function sqliteApiPlugin(): Plugin {
                                 requestBody,
                                 baseUrl: llamaStream.resolveUpstreamConnection().baseUrl,
                                 apiKey: llamaStream.resolveUpstreamConnection().apiKey,
-                            },
-                            { previousTurnCount }
+                            }
                         );
                         res.json({ success: true, taskId });
                     } else {
