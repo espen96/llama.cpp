@@ -358,7 +358,9 @@ class ChatStore {
 						}
 						conversationsStore.updateMessageAtIndex(idx, uiUpdate);
 					}
-					await conversationsStore.updateCurrentNode(messageId);
+					if (conversationsStore.activeConversation?.id === convId) {
+						await conversationsStore.updateCurrentNode(messageId);
+					}
 					this.setStreamingActive(false);
 					this.setChatLoading(convId, false);
 					this.clearChatStreaming(convId);
@@ -392,8 +394,10 @@ class ChatStore {
 						children: [],
 						parent: parentId
 					};
-					conversationsStore.addMessageToActive(newMsg);
-					conversationsStore.updateCurrentNode(newMsgId).catch(console.error);
+					if (conversationsStore.activeConversation?.id === convId) {
+						conversationsStore.addMessageToActive(newMsg);
+						conversationsStore.updateCurrentNode(newMsgId).catch(console.error);
+					}
 					messageId = newMsgId;
 					streamedContent = '';
 					streamedReasoning = '';
@@ -411,8 +415,10 @@ class ChatStore {
 						children: [],
 						parent: parentId
 					};
-					conversationsStore.addMessageToActive(newMsg);
-					conversationsStore.updateCurrentNode(newMsgId).catch(console.error);
+					if (conversationsStore.activeConversation?.id === convId) {
+						conversationsStore.addMessageToActive(newMsg);
+						conversationsStore.updateCurrentNode(newMsgId).catch(console.error);
+					}
 				}
 			},
 			undefined // backend owns connection
@@ -1130,7 +1136,9 @@ class ChatStore {
 							children: [],
 							parent: parentId
 						};
-						conversationsStore.addMessageToActive(newMsg);
+						if (conversationsStore.activeConversation?.id === convId) {
+							conversationsStore.addMessageToActive(newMsg);
+						}
 						currentMessageId = messageId;
 						streamedContent = '';
 						streamedReasoningContent = '';
@@ -1148,8 +1156,10 @@ class ChatStore {
 							children: [],
 							parent: parentId
 						};
-						conversationsStore.addMessageToActive(newMsg);
-						conversationsStore.updateCurrentNode(messageId).catch(console.error);
+						if (conversationsStore.activeConversation?.id === convId) {
+							conversationsStore.addMessageToActive(newMsg);
+							conversationsStore.updateCurrentNode(messageId).catch(console.error);
+						}
 					},
 				onComplete: async (content: string, reasoningContent?: string, timings?: ChatMessageTimings) => {
 					// Guard against double-complete (done event + [DONE] chunk both calling finalize)
@@ -1177,7 +1187,9 @@ class ChatStore {
 
 						if (resolvedModel) uiUpdate.model = resolvedModel;
 						conversationsStore.updateMessageAtIndex(idx, uiUpdate);
-						await conversationsStore.updateCurrentNode(currentMessageId);
+						if (conversationsStore.activeConversation?.id === convId) {
+							await conversationsStore.updateCurrentNode(currentMessageId);
+						}
 						cleanupStreamingState();
 						if (onComplete) await onComplete(content);
 						if (isRouterMode()) modelsStore.fetchRouterModels().catch(console.error);
