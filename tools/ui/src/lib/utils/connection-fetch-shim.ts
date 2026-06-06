@@ -368,7 +368,8 @@ export function installConnectionFetchShim(): void {
 				const targetUrl = `${baseUrl}/v1/models${queryString}`;
 				console.debug(`[Shim] Fetching models from: ${targetUrl}`);
 				try {
-					const response = await originalFetch(targetUrl, { ...init, headers: connectionHeaders });
+					const proxiedUrl = buildProxiedUrl(targetUrl).toString();
+					const response = await originalFetch(proxiedUrl, { ...init, headers: connectionHeaders });
 
 					// Sanitize the response to avoid Open WebUI specific fields confusing the UI
 					if (response.ok) {
