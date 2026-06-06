@@ -169,3 +169,4 @@ tools/ui/package-lock.json
 *.sqlite3
 *.sqlite3-shm
 /tools/ui/.data
+*.sqlite3-shm
