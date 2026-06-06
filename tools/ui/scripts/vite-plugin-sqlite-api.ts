@@ -9,12 +9,10 @@ import * as taskManager from './background/task-manager.js';
 import * as sseHub from './background/sse-hub.js';
 import { db } from './sqlite/db.js';
 import { buildOaiRequestBody } from './background/payload-builder.js';
-export function sqliteApiPlugin(): Plugin {
-    return {
-        name: 'vite-plugin-sqlite-api',
-        configureServer(server) {
-            const app = express();
-            app.use(bodyParser.json({ limit: '50mb' }));
+
+export function createExpressApp(): express.Express {
+    const app = express();
+    app.use(bodyParser.json({ limit: '50mb' }));
             // --- Conversations ---
 
             app.get('/conversations', (req, res) => {
@@ -466,6 +464,14 @@ export function sqliteApiPlugin(): Plugin {
                     res.status(500).json({ error: e.message });
                 }
             });
+    return app;
+}
+
+export function sqliteApiPlugin(): Plugin {
+    return {
+        name: 'vite-plugin-sqlite-api',
+        configureServer(server) {
+            const app = createExpressApp();
             // Mount express app under /api
             server.middlewares.use('/api', app);
         }
