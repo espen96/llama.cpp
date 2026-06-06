@@ -147,10 +147,9 @@ class AgenticStore {
 	}
 
 	getSession(conversationId: string): AgenticSession {
-		let session = this._sessions.get(conversationId);
+		const session = this._sessions.get(conversationId);
 		if (!session) {
-			session = createDefaultSession();
-			this._sessions.set(conversationId, session);
+			return createDefaultSession();
 		}
 		return session;
 	}
