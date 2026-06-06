@@ -288,7 +288,7 @@
 
 	<Sidebar.Provider bind:open={sidebarOpen}>
 		{#if storageInitialized}
-			<div class="flex h-screen w-full">
+			<div class="flex h-dvh w-full">
 				<Sidebar.Root variant="floating" class="h-full"
 					><SidebarNavigation bind:this={chatSidebar} /></Sidebar.Root
 				>

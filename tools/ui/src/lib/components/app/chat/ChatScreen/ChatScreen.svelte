@@ -504,7 +504,7 @@
 			{/if}
 			<div
 				class="transition-all duration-300 {artifactsStore.isFullscreen
-					? 'fixed inset-0 z-[9999] h-screen w-screen'
+					? 'fixed inset-0 z-[9999] h-dvh w-screen'
 					: isMobile.current
 						? 'absolute inset-0 z-[1000] h-full w-full'
 						: 'h-full'} {isResizing ? '!duration-0' : ''}"
