@@ -12,6 +12,7 @@ import { playwright } from '@vitest/browser-playwright';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const SERVER_ORIGIN = import.meta.env?.VITE_PUBLIC_SERVER_ORIGIN || 'http://localhost:8080';
+const UPSTREAM_PATH = import.meta.env?.VITE_PUBLIC_UPSTREAM_PATH || '/upstream/demo';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const browserBaseConfig: any = {
@@ -77,13 +78,38 @@ export default defineConfig({
 	},
 
 	server: {
+		port: 5173,
 		proxy: {
-			'/v1': SERVER_ORIGIN,
-			'/props': SERVER_ORIGIN,
-			'/models': SERVER_ORIGIN,
-			'/tools': SERVER_ORIGIN,
-			'/slots': SERVER_ORIGIN,
-			'/cors-proxy': SERVER_ORIGIN
+			'/v1': {
+				target: SERVER_ORIGIN,
+				changeOrigin: true,
+				rewrite: (path) => UPSTREAM_PATH + path
+			},
+			'/props': {
+				target: SERVER_ORIGIN,
+				changeOrigin: true,
+				rewrite: (path) => UPSTREAM_PATH + path
+			},
+			'/models': {
+				target: SERVER_ORIGIN,
+				changeOrigin: true,
+				rewrite: (path) => UPSTREAM_PATH + path
+			},
+			'/tools': {
+				target: SERVER_ORIGIN,
+				changeOrigin: true,
+				rewrite: (path) => UPSTREAM_PATH + path
+			},
+			'/slots': {
+				target: SERVER_ORIGIN,
+				changeOrigin: true,
+				rewrite: (path) => UPSTREAM_PATH + path
+			},
+			'/cors-proxy': {
+				target: SERVER_ORIGIN,
+				changeOrigin: true,
+				rewrite: (path) => UPSTREAM_PATH + path
+			}
 		},
 		headers: {
 			'Cross-Origin-Embedder-Policy': 'require-corp',
